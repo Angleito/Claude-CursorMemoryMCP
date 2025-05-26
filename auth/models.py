@@ -1,15 +1,21 @@
-"""
-Authentication and user models
-"""
-from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
-from pydantic import BaseModel, EmailStr, validator
-from enum import Enum
+"""Authentication and user models."""
+
 import uuid
+from datetime import datetime
+from enum import Enum
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+
+from pydantic import BaseModel
+from pydantic import EmailStr
+from pydantic import validator
 
 
 class UserRole(str, Enum):
-    """User roles enum"""
+    """User roles enum."""
+
     ADMIN = "admin"
     USER = "user"
     READONLY = "readonly"
@@ -17,7 +23,8 @@ class UserRole(str, Enum):
 
 
 class UserStatus(str, Enum):
-    """User status enum"""
+    """User status enum."""
+
     ACTIVE = "active"
     INACTIVE = "inactive"
     SUSPENDED = "suspended"
@@ -25,7 +32,8 @@ class UserStatus(str, Enum):
 
 
 class User(BaseModel):
-    """User model"""
+    """User model."""
+
     id: uuid.UUID
     email: EmailStr
     username: str
@@ -38,30 +46,31 @@ class User(BaseModel):
     last_login: Optional[datetime] = None
     failed_login_attempts: int = 0
     locked_until: Optional[datetime] = None
-    
+
     # Security fields
     password_changed_at: Optional[datetime] = None
     mfa_enabled: bool = False
     mfa_secret: Optional[str] = None
-    
+
     # Compliance
     data_processing_consent: bool = False
     data_processing_consent_date: Optional[datetime] = None
-    
+
     class Config:
         orm_mode = True
 
 
 class UserCreate(BaseModel):
-    """User creation model"""
+    """User creation model."""
+
     email: EmailStr
     username: str
     password: str
     full_name: Optional[str] = None
     role: UserRole = UserRole.USER
-    
+
     @validator("password")
-    def validate_password(cls, v):
+    def validate_password(self, v):
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters long")
         if not any(c.isupper() for c in v):
@@ -71,9 +80,9 @@ class UserCreate(BaseModel):
         if not any(c.isdigit() for c in v):
             raise ValueError("Password must contain at least one digit")
         return v
-    
+
     @validator("username")
-    def validate_username(cls, v):
+    def validate_username(self, v):
         if len(v) < 3:
             raise ValueError("Username must be at least 3 characters long")
         if not v.isalnum():
@@ -82,7 +91,8 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """User update model"""
+    """User update model."""
+
     email: Optional[EmailStr] = None
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
@@ -90,14 +100,16 @@ class UserUpdate(BaseModel):
 
 
 class UserLogin(BaseModel):
-    """User login model"""
+    """User login model."""
+
     email: EmailStr
     password: str
     remember_me: bool = False
 
 
 class Token(BaseModel):
-    """Token model"""
+    """Token model."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -105,7 +117,8 @@ class Token(BaseModel):
 
 
 class TokenData(BaseModel):
-    """Token data model"""
+    """Token data model."""
+
     user_id: uuid.UUID
     email: str
     role: UserRole
@@ -115,7 +128,8 @@ class TokenData(BaseModel):
 
 
 class APIKey(BaseModel):
-    """API Key model"""
+    """API Key model."""
+
     id: uuid.UUID
     user_id: uuid.UUID
     name: str
@@ -126,26 +140,28 @@ class APIKey(BaseModel):
     created_at: datetime
     last_used: Optional[datetime] = None
     expires_at: Optional[datetime] = None
-    
+
     class Config:
         orm_mode = True
 
 
 class APIKeyCreate(BaseModel):
-    """API Key creation model"""
+    """API Key creation model."""
+
     name: str
     permissions: List[str] = []
     expires_in_days: Optional[int] = None
-    
+
     @validator("name")
-    def validate_name(cls, v):
+    def validate_name(self, v):
         if len(v) < 3:
             raise ValueError("API key name must be at least 3 characters long")
         return v
 
 
 class APIKeyResponse(BaseModel):
-    """API Key response model (includes actual key)"""
+    """API Key response model (includes actual key)."""
+
     id: uuid.UUID
     name: str
     key: str  # Only returned on creation
@@ -154,7 +170,8 @@ class APIKeyResponse(BaseModel):
 
 
 class Session(BaseModel):
-    """User session model"""
+    """User session model."""
+
     id: uuid.UUID
     user_id: uuid.UUID
     token_jti: str
@@ -163,13 +180,14 @@ class Session(BaseModel):
     created_at: datetime
     expires_at: datetime
     is_active: bool = True
-    
+
     class Config:
         orm_mode = True
 
 
 class AuditLog(BaseModel):
-    """Audit log model"""
+    """Audit log model."""
+
     id: uuid.UUID
     user_id: Optional[uuid.UUID] = None
     api_key_id: Optional[uuid.UUID] = None
@@ -180,13 +198,14 @@ class AuditLog(BaseModel):
     user_agent: str
     details: Dict[str, Any] = {}
     timestamp: datetime
-    
+
     class Config:
         orm_mode = True
 
 
 class SecurityEvent(BaseModel):
-    """Security event model"""
+    """Security event model."""
+
     id: uuid.UUID
     event_type: str  # failed_login, suspicious_activity, etc.
     user_id: Optional[uuid.UUID] = None
@@ -195,13 +214,14 @@ class SecurityEvent(BaseModel):
     severity: str  # low, medium, high, critical
     timestamp: datetime
     resolved: bool = False
-    
+
     class Config:
         orm_mode = True
 
 
 class RateLimitInfo(BaseModel):
-    """Rate limit information"""
+    """Rate limit information."""
+
     limit: int
     remaining: int
     reset_time: datetime
@@ -209,34 +229,38 @@ class RateLimitInfo(BaseModel):
 
 
 class PasswordReset(BaseModel):
-    """Password reset model"""
+    """Password reset model."""
+
     email: EmailStr
 
 
 class PasswordResetConfirm(BaseModel):
-    """Password reset confirmation model"""
+    """Password reset confirmation model."""
+
     token: str
     new_password: str
-    
+
     @validator("new_password")
-    def validate_password(cls, v):
+    def validate_password(self, v):
         if len(v) < 8:
             raise ValueError("Password must be at least 8 characters long")
         return v
 
 
 class MFASetup(BaseModel):
-    """MFA setup model"""
+    """MFA setup model."""
+
     secret: str
     qr_code: str
 
 
 class MFAVerify(BaseModel):
-    """MFA verification model"""
+    """MFA verification model."""
+
     token: str
-    
+
     @validator("token")
-    def validate_token(cls, v):
+    def validate_token(self, v):
         if len(v) != 6 or not v.isdigit():
             raise ValueError("MFA token must be 6 digits")
         return v

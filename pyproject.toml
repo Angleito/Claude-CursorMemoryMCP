@@ -9,7 +9,7 @@ description = "Advanced memory management system with pgvector optimization"
 authors = [{name = "mem0ai Team"}]
 license = {text = "MIT"}
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.8"  # Python 3.12+ recommended for optimal performance
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -24,7 +24,7 @@ classifiers = [
 
 [tool.ruff]
 # Ruff configuration
-target-version = "py38"
+target-version = "py312"
 line-length = 88
 select = [
     "E",      # pycodestyle errors
@@ -106,7 +106,7 @@ extend-exclude = '''
 '''
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -193,9 +193,78 @@ precision = 2
 directory = "htmlcov"
 
 [tool.bandit]
-# Will be configured in .bandit file
+exclude_dirs = ["tests", "venv", "env", ".venv", "logs"]
+skips = ["B101", "B601"]
 
 [tool.vulture]
 min_confidence = 80
 paths = ["src", "auth", "security", "monitoring"]
 exclude = ["logs/", "venv/", "env/"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+known_first_party = ["mem0ai", "src", "auth", "security", "monitoring"]
+known_third_party = ["fastapi", "asyncpg", "redis", "openai", "cohere"]
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "E501", "W503"]
+max-complexity = 12
+per-file-ignores = [
+    "tests/*.py:S101,PLR2004",
+    "scripts/*.py:T20"
+]
+
+[tool.pylint.main]
+load-plugins = ["pylint.extensions.docparams"]
+
+[tool.pylint.messages_control]
+disable = [
+    "C0103",  # Invalid name
+    "C0114",  # Missing module docstring
+    "C0115",  # Missing class docstring
+    "C0116",  # Missing function docstring
+    "R0903",  # Too few public methods
+    "R0913",  # Too many arguments
+    "W0613",  # Unused argument
+]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.safety]
+ignore = []
+output = "json"
+
+[tool.detect-secrets]
+version = "1.4.0"
+exclude_files = "^(logs/|venv/|env/|\.venv/|htmlcov/|reports/|build/|dist/)"
+filters_used = [
+    {"path": "detect_secrets.filters.allowlist.is_line_allowlisted"},
+    {"path": "detect_secrets.filters.common.is_baseline_file"},
+    {"path": "detect_secrets.filters.common.is_ignored_due_to_verification_policies", "min_level": 2},
+    {"path": "detect_secrets.filters.heuristic.is_indirect_reference"},
+    {"path": "detect_secrets.filters.heuristic.is_likely_id_string"},
+    {"path": "detect_secrets.filters.heuristic.is_lock_file"},
+    {"path": "detect_secrets.filters.heuristic.is_not_alphanumeric_string"},
+    {"path": "detect_secrets.filters.heuristic.is_potential_uuid"},
+    {"path": "detect_secrets.filters.heuristic.is_prefixed_with_dollar_sign"},
+    {"path": "detect_secrets.filters.heuristic.is_sequential_string"},
+    {"path": "detect_secrets.filters.heuristic.is_swagger_file"},
+    {"path": "detect_secrets.filters.heuristic.is_templated_secret"}
+]
+
+[tool.radon]
+cc_min = "B"
+mi_min = "B"
+
+[tool.xenon]
+max_absolute = "B"
+max_modules = "B"
+max_average = "A"

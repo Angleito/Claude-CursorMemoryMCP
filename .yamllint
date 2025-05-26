@@ -1,0 +1,87 @@
+# YAML Lint configuration for mem0ai
+
+extends: relaxed
+
+rules:
+  # Line length
+  line-length:
+    max: 120
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Indentation
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Key duplicates
+  key-duplicates: enable
+
+  # Key ordering
+  key-ordering: disable
+
+  # Document start
+  document-start:
+    present: false
+
+  # Document end
+  document-end:
+    present: false
+
+  # Comments
+  comments:
+    min-spaces-from-content: 1
+    min-spaces-after-comment-start: 1
+
+  # Empty lines
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+
+  # Empty values
+  empty-values:
+    forbid-in-block-mappings: false
+    forbid-in-flow-mappings: true
+
+  # Floating values
+  float-values:
+    require-numeral-before-decimal: false
+    require-numeral-after-decimal: false
+
+  # Hyphens
+  hyphens:
+    max-spaces-after: 1
+
+  # New lines
+  new-line-at-end-of-file: enable
+
+  # Octal values
+  octal-values:
+    forbid-implicit-octal: true
+    forbid-explicit-octal: false
+
+  # Quoted strings
+  quoted-strings:
+    quote-type: any
+    required: only-when-needed
+
+  # Trailing spaces
+  trailing-spaces: enable
+
+  # Truthy
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no']
+    check-keys: true
+
+# File patterns to ignore
+ignore: |
+  logs/
+  htmlcov/
+  reports/
+  .github/
+  node_modules/
+  build/
+  dist/
+  *.egg-info/

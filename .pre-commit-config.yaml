@@ -1,58 +1,21 @@
-# Pre-commit hooks configuration
-# Run 'pre-commit install' to install the hooks
+# Pre-commit configuration for mem0ai
+# Run `pre-commit install` to install hooks
+# Run `pre-commit run --all-files` to run all hooks on all files
+
+default_language_version:
+  python: python3.12
+
 repos:
-  # Ruff for fast Python linting and formatting
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.9
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-        types_or: [python, pyi]
-      - id: ruff-format
-        types_or: [python, pyi]
-
-  # Black for Python code formatting
-  - repo: https://github.com/psf/black
-    rev: 23.12.1
-    hooks:
-      - id: black
-        language_version: python3
-        types: [python]
-
-  # isort for import sorting (handled by ruff, but keeping as backup)
-  - repo: https://github.com/pycqa/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ["--profile", "black", "--filter-files"]
-
-  # mypy for static type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
-      - id: mypy
-        additional_dependencies: [types-redis, types-requests]
-        args: [--ignore-missing-imports]
-        exclude: ^(tests/|scripts/)
-
-  # Bandit for security linting
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.7.5
-    hooks:
-      - id: bandit
-        args: ["-c", ".bandit"]
-        exclude: ^tests/
-
-  # Built-in pre-commit hooks
+  # Pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: v4.6.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^.*\.(md|rst)$
+        exclude: ^(.*\.md|.*\.txt)$
       - id: end-of-file-fixer
-        exclude: ^.*\.(md|rst)$
+        exclude: ^(logs/|htmlcov/|reports/)
       - id: check-yaml
-        exclude: ^config/
+        args: [--allow-multiple-documents]
       - id: check-json
       - id: check-toml
       - id: check-xml
@@ -61,77 +24,152 @@ repos:
       - id: check-symlinks
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
-      - id: fix-byte-order-marker
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: requirements-txt-fixer
       - id: mixed-line-ending
         args: [--fix=lf]
-      - id: check-docstring-first
-      - id: check-ast
-      - id: debug-statements
-      - id: name-tests-test
-        args: [--pytest-test-first]
-      - id: requirements-txt-fixer
       - id: check-added-large-files
         args: [--maxkb=1000]
 
-  # Security and secrets detection
+  # Ruff - Fast Python linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.10
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Black - Python code formatter
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        language_version: python3.12
+
+  # isort - Import sorting
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: [--profile=black, --line-length=88]
+
+  # MyPy - Static type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-requests
+          - types-redis
+          - types-PyYAML
+          - types-python-dateutil
+        args: [--ignore-missing-imports, --strict]
+        exclude: ^(tests/|scripts/)
+
+  # Bandit - Security linter
+  - repo: https://github.com/pycqa/bandit
+    rev: 1.7.9
+    hooks:
+      - id: bandit
+        args: [-r, ., -f, txt, --skip, B101,B601]
+        exclude: ^tests/
+
+  # Safety - Dependency vulnerability scanner
+  - repo: https://github.com/Lucas-C/pre-commit-hooks-safety
+    rev: v1.3.2
+    hooks:
+      - id: python-safety-dependencies-check
+
+  # detect-secrets - Prevent secrets from being committed
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.4.0
     hooks:
       - id: detect-secrets
-        args: ['--baseline', '.secrets.baseline']
-        exclude: ^(.*\.lock|.*requirements.*\.txt)$
+        args: [--baseline, .secrets.baseline]
+        exclude: ^(logs/|htmlcov/|reports/|\.secrets\.baseline)
 
-  # Shell scripts linting
-  - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.9.0.6
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
     hooks:
-      - id: shellcheck
-        args: [--severity=warning]
+      - id: yamllint
+        args: [-d, relaxed]
 
-  # Docker linting
+  # Dockerfile linting
   - repo: https://github.com/hadolint/hadolint
     rev: v2.12.0
     hooks:
       - id: hadolint-docker
-        args: [--ignore, DL3008, --ignore, DL3009]
+        args: [--ignore, DL3008, --ignore, DL3009, --ignore, DL3015]
 
-  # YAML linting
-  - repo: https://github.com/adrienverge/yamllint
-    rev: v1.33.0
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
     hooks:
-      - id: yamllint
-        args: [-d, relaxed]
-        exclude: ^config/
+      - id: shellcheck
+        args: [-x]
 
-  # SQL formatting and linting
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.41.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+        exclude: ^(logs/|htmlcov/|reports/)
+
+  # Dead code detection
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.11
+    hooks:
+      - id: vulture
+        args: [--min-confidence, '80']
+        files: ^(src/|auth/|security/|monitoring/)
+
+  # Dependency sorting
+  - repo: https://github.com/asottile/reorder_python_imports
+    rev: v3.12.0
+    hooks:
+      - id: reorder-python-imports
+        args: [--py3-plus, --application-directories=src:auth:security:monitoring]
+
+  # SQL formatting
   - repo: https://github.com/sqlfluff/sqlfluff
-    rev: 3.0.0a6
+    rev: 3.1.0
     hooks:
       - id: sqlfluff-lint
-        additional_dependencies: [sqlfluff-templater-jinja]
-        args: [--dialect, postgres]
+        args: [--dialect=postgres]
       - id: sqlfluff-fix
-        additional_dependencies: [sqlfluff-templater-jinja]
-        args: [--dialect, postgres]
+        args: [--dialect=postgres]
 
-  # Documentation linting
-  - repo: https://github.com/pycqa/doc8
-    rev: v1.1.1
+  # Configuration file validation
+  - repo: local
     hooks:
-      - id: doc8
-        args: [--max-line-length=88]
+      - id: validate-config
+        name: Validate configuration files
+        entry: make validate-config
+        language: system
+        pass_filenames: false
+        stages: [commit]
 
-# Global configuration
-default_stages: [commit]
-fail_fast: false
-minimum_pre_commit_version: "3.0.0"
+  # Custom security checks
+  - repo: local
+    hooks:
+      - id: security-audit
+        name: Security audit
+        entry: python -m scripts.security_audit
+        language: system
+        pass_filenames: false
+        stages: [push]
 
-# CI configuration
 ci:
-  autofix_commit_msg: "🤖 [pre-commit.ci] auto fixes from pre-commit hooks"
+  autofix_commit_msg: |
+    [pre-commit.ci] auto fixes from pre-commit.com hooks
+
+    for more information, see https://pre-commit.ci
   autofix_prs: true
-  autoupdate_branch: ""
-  autoupdate_commit_msg: "🤖 [pre-commit.ci] pre-commit autoupdate"
+  autoupdate_branch: ''
+  autoupdate_commit_msg: '[pre-commit.ci] pre-commit autoupdate'
   autoupdate_schedule: weekly
-  skip: []
+  skip: [python-safety-dependencies-check, hadolint-docker]
   submodules: false

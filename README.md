@@ -1,383 +1,271 @@
-# mem0ai pgvector Optimization Suite
+# 🧠 Claude-Cursor Memory MCP Server
 
-A comprehensive, production-grade pgvector configuration and optimization system for mem0ai, designed for optimal vector storage and retrieval performance.
+[![CI/CD Pipeline](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/ci.yml/badge.svg)](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/ci.yml)
+[![Code Quality](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/lint.yml/badge.svg)](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/lint.yml)
+[![Security](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/security.yml/badge.svg)](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/security.yml)
+[![Coverage](https://codecov.io/gh/Angleito/Claude-CursorMemoryMCP/branch/main/graph/badge.svg)](https://codecov.io/gh/Angleito/Claude-CursorMemoryMCP)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Linting: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Security: bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
+[![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
 
-## 🚀 Features
+An intelligent memory persistence layer that integrates with Claude Code and Cursor via the Model Context Protocol (MCP), providing long-term conversational memory and context across sessions.
 
-### Core Components
+## 🎯 Overview
 
-1. **pgvector Setup & Configuration** (`setup_pgvector.sql`)
-   - Optimized PostgreSQL + pgvector schema
-   - HNSW and IVF indexing strategies
-   - Row-level security and performance tuning
-   - Automated functions for batch operations
+The Claude-Cursor Memory MCP Server is a specialized memory system designed to enhance AI coding assistants by providing persistent memory capabilities. Built on PostgreSQL with pgvector, it allows Claude Code and Cursor to remember conversations, code patterns, user preferences, and project context across sessions.
 
-2. **Vector Indexing & Benchmarking** (`vector_indexing_benchmark.py`)
-   - Performance benchmarking for HNSW vs IVF indexes
-   - Automated index parameter tuning
-   - Comprehensive metrics and recommendations
+### 🚀 What is MCP?
 
-3. **Embedding Pipeline** (`embedding_pipeline.py`)
-   - Multi-provider support (OpenAI, Cohere, Sentence Transformers, HuggingFace)
-   - Intelligent caching with Redis
-   - Rate limiting and batch processing
-   - Provider benchmarking and auto-selection
+The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistants to connect to external data sources and tools. This memory server acts as an MCP server that:
 
-4. **Similarity Search Optimization** (`similarity_search_optimizer.py`)
-   - Multiple search algorithms (exact, FAISS, hybrid)
-   - Advanced reranking with importance scoring
-   - Temporal decay and diversity algorithms
-   - Redis-based result caching
+- **Remembers Conversations**: Stores chat history and context across sessions
+- **Learns Code Patterns**: Remembers coding preferences and patterns you use
+- **Maintains Project Context**: Keeps track of project-specific information
+- **Provides Smart Suggestions**: Uses memory to offer more relevant suggestions
 
-5. **Batch Processing System** (`batch_processor.py`)
-   - High-performance parallel processing
-   - Memory monitoring and checkpointing
-   - Graceful error handling and recovery
-   - Progress tracking and metrics
+### ⚡ Key Features
 
-6. **Vector Compression** (`vector_compression.py`)
-   - Multiple compression strategies (PCA, quantization, product quantization)
-   - Lossless and lossy compression options
-   - Benchmarking and automatic method selection
-   - Storage efficiency optimization
+- **MCP Integration**: Native support for Claude Code and Cursor
+- **Intelligent Memory**: Vector-based similarity search for relevant context retrieval
+- **Session Persistence**: Maintains conversation history across IDE restarts
+- **Code Pattern Learning**: Remembers your coding style and preferences
+- **Project Memory**: Context-aware memory per project/workspace
+- **Privacy-First**: Local deployment with GDPR compliance
+- **Real-time Sync**: Instant memory updates across multiple AI sessions
+- **Advanced Search**: Natural language queries to find relevant memories
+- **Secure**: Enterprise-grade security with encryption and access controls
 
-7. **Query Performance Tuning** (`query_performance_tuner.py`)
-   - Automated PostgreSQL optimization
-   - Index usage analysis and recommendations
-   - Query plan analysis and optimization
-   - Database configuration tuning
-
-8. **Memory Deduplication** (`memory_deduplicator.py`)
-   - Multi-strategy duplicate detection
-   - Fuzzy text matching and semantic similarity
-   - Temporal clustering and content hashing
-   - Configurable merge strategies
-
-9. **Backup & Recovery** (`backup_recovery_system.py`)
-   - Multi-format backup support (full, incremental, vector-only)
-   - Multiple storage backends (local, S3, GCS, Azure)
-   - Compression and encryption
-   - Automated retention policies
-
-10. **Monitoring & Metrics** (`monitoring_metrics.py`)
-    - Real-time performance monitoring
-    - Customizable alerting system
-    - Prometheus integration
-    - Web dashboard with visualizations
-
-## 📦 Installation
+## 🛠️ Installation & Setup
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.12+ (recommended, minimum 3.8)
 - PostgreSQL 13+ with pgvector extension
-- Redis (for caching)
-- Docker and Docker Compose (optional but recommended)
+- Docker & Docker Compose (recommended)
 
-### Quick Start with Docker
+### Quick Start
 
-1. **Clone and setup:**
+1. **Clone and Setup**
    ```bash
-   git clone <repository>
-   cd mem0ai
+   git clone https://github.com/Angleito/Claude-CursorMemoryMCP.git
+   cd Claude-CursorMemoryMCP
+   python scripts/setup.py
    ```
 
-2. **Start the stack:**
+2. **Configure Environment**
    ```bash
-   docker-compose up -d
+   cp .env.example .env
+   # Edit .env with your settings
+   nano .env
    ```
 
-3. **Install Python dependencies:**
+3. **Start the MCP Server**
    ```bash
-   pip install -r requirements.txt
+   python main.py
    ```
 
-4. **Initialize the database:**
-   ```bash
-   python -c "
-   import asyncio
-   from setup_pgvector import initialize_database
-   asyncio.run(initialize_database())
-   "
-   ```
-
-### Manual Installation
-
-1. **Install PostgreSQL with pgvector:**
-   ```bash
-   # Ubuntu/Debian
-   sudo apt install postgresql-15 postgresql-15-pgvector
-   
-   # macOS with Homebrew
-   brew install postgresql pgvector
-   ```
-
-2. **Install Redis:**
-   ```bash
-   # Ubuntu/Debian
-   sudo apt install redis-server
-   
-   # macOS
-   brew install redis
-   ```
-
-3. **Setup database:**
-   ```bash
-   createdb mem0ai
-   psql mem0ai < setup_pgvector.sql
-   ```
-
-## 🔧 Configuration
-
-### Environment Variables
+### Docker Deployment
 
 ```bash
-# Database
-DATABASE_URL=postgresql://mem0ai_user:mem0ai_password@localhost:5432/mem0ai
+# Start all services
+docker-compose up -d
 
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# API Keys (optional)
-OPENAI_API_KEY=your_openai_key
-COHERE_API_KEY=your_cohere_key
-
-# Monitoring
-PROMETHEUS_PORT=9090
-GRAFANA_PORT=3000
+# View logs
+docker-compose logs -f
 ```
 
-### PostgreSQL Configuration
+## 🔧 MCP Configuration
 
-Key settings in `postgresql.conf`:
-```
-shared_buffers = 256MB          # 25% of available RAM
-work_mem = 64MB                 # For sorting operations
-maintenance_work_mem = 256MB    # For index creation
-effective_cache_size = 1GB      # Total memory for caching
-max_parallel_workers_per_gather = 4
-```
+### Claude Code Integration
 
-## 🚀 Usage Examples
+Add to your `~/.claude/mcp_servers.json`:
 
-### Basic Setup
-
-```python
-import asyncio
-from embedding_pipeline import EmbeddingPipeline
-from similarity_search_optimizer import SimilaritySearchOptimizer
-
-async def main():
-    # Initialize components
-    DB_URL = "postgresql://user:pass@localhost/mem0ai"
-    
-    # Setup embedding pipeline
-    pipeline = EmbeddingPipeline(DB_URL)
-    await pipeline.initialize()
-    
-    # Setup search optimizer
-    search = SimilaritySearchOptimizer(DB_URL)
-    await search.initialize()
-    
-    # Generate embeddings
-    from embedding_pipeline import EmbeddingRequest
-    request = EmbeddingRequest(
-        text="I love programming in Python",
-        user_id="user123"
-    )
-    result = await pipeline.generate_embedding(request)
-    
-    # Store in database
-    stored_ids = await pipeline.store_embeddings([result])
-    
-    # Search similar memories
-    from similarity_search_optimizer import SearchQuery, SearchConfig
-    query = SearchQuery(
-        user_id="user123",
-        query_embedding=result.embedding,
-        config=SearchConfig(top_k=10, similarity_threshold=0.7)
-    )
-    search_results = await search.search(query)
-    
-    print(f"Found {len(search_results.results)} similar memories")
-
-asyncio.run(main())
-```
-
-### Batch Processing
-
-```python
-from batch_processor import BatchProcessor, BatchJob, BatchItem, BatchOperation
-import uuid
-
-async def batch_example():
-    processor = BatchProcessor("postgresql://user:pass@localhost/mem0ai")
-    await processor.initialize()
-    
-    # Create batch items
-    items = []
-    for i in range(1000):
-        item = BatchItem(
-            id=str(uuid.uuid4()),
-            operation=BatchOperation.INSERT,
-            data={
-                'user_id': 'batch_user',
-                'memory_text': f'Batch memory {i}',
-                'embedding': [0.1] * 1536,  # Example embedding
-                'metadata': {'batch': True, 'index': i}
-            }
-        )
-        items.append(item)
-    
-    # Create and submit job
-    job = BatchJob(
-        job_id=str(uuid.uuid4()),
-        operation=BatchOperation.INSERT,
-        items=items,
-        config=BatchConfig(batch_size=100, max_workers=4)
-    )
-    
-    # Process batch
-    result = await processor.process_job(job)
-    print(f"Processed {result.processed_items} items in {result.processing_time_seconds}s")
-```
-
-### Performance Monitoring
-
-```python
-from monitoring_metrics import MonitoringSystem
-
-async def monitoring_example():
-    config = {
-        'retention_hours': 24,
-        'dashboard_port': 8080,
-        'prometheus_port': 8000
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "python",
+      "args": ["/path/to/Claude-CursorMemoryMCP/main.py"],
+      "env": {
+        "PYTHONPATH": "/path/to/Claude-CursorMemoryMCP"
+      }
     }
-    
-    monitoring = MonitoringSystem("postgresql://user:pass@localhost/mem0ai", config)
-    await monitoring.initialize()
-    
-    # Record custom metrics
-    monitoring.record_metric('custom_operation_duration', 150.5, 
-                           {'operation': 'embedding', 'provider': 'openai'})
-    
-    # Use profiler for automatic timing
-    profiler = monitoring.get_profiler()
-    
-    operation_id = profiler.start_operation("vector_search", "search", 
-                                          {'user_id': 'test', 'index': 'hnsw'})
-    # ... perform operation ...
-    profiler.end_operation(operation_id, success=True)
+  }
+}
 ```
 
-## 📊 Performance Benchmarks
+### Cursor Integration
 
-### Vector Indexing Performance
+Add to your Cursor settings:
 
-| Index Type | Build Time | Query Time (P95) | Memory Usage | Recall@10 |
-|------------|------------|------------------|--------------|-----------|
-| HNSW (m=16, ef=64) | 45s | 2.3ms | 1.2GB | 0.95 |
-| IVF (lists=1000) | 12s | 8.7ms | 800MB | 0.89 |
-| Exact (brute force) | 0s | 125ms | 600MB | 1.00 |
+```json
+{
+  "mcp.servers": {
+    "memory": {
+      "command": "python",
+      "args": ["/path/to/Claude-CursorMemoryMCP/main.py"],
+      "env": {
+        "MEMORY_SERVER_URL": "http://localhost:8000"
+      }
+    }
+  }
+}
+```
 
-### Compression Efficiency
+## 📋 MCP Tools Available
 
-| Method | Compression Ratio | Accuracy Loss | Decompression Time |
-|---------|------------------|---------------|-------------------|
-| None | 1.00x | 0% | 0ms |
-| Float16 | 2.00x | <0.1% | 1.2ms |
-| PCA (512d) | 3.00x | 2.1% | 3.4ms |
-| Product Quantization | 8.00x | 5.2% | 0.8ms |
-| Hybrid | 4.50x | 1.8% | 2.1ms |
+### Memory Management
+- `store_memory(content, context, tags)` - Store new memories
+- `search_memory(query, limit)` - Search existing memories
+- `get_recent_memories(limit)` - Get recent conversation history
+- `delete_memory(memory_id)` - Remove specific memories
 
-## 🔍 Monitoring & Alerting
+### Context Management
+- `save_context(project, context)` - Save project context
+- `load_context(project)` - Load project context
+- `list_projects()` - List all projects with memory
 
-### Web Dashboard
+### Code Pattern Learning
+- `learn_pattern(code, description, language)` - Learn coding patterns
+- `suggest_pattern(context)` - Get pattern suggestions
+- `get_code_style(language)` - Get learned coding style
 
-Access the monitoring dashboard at `http://localhost:8080` to view:
-- Real-time system metrics
-- Active alerts and their status
-- Performance trends and analytics
-- Index usage statistics
+### Session Management
+- `start_session(project, user)` - Start new coding session
+- `end_session(session_id)` - End coding session
+- `get_session_history(session_id)` - Get session history
+
+## 🏗️ Core Architecture
+
+### Memory Types
+
+1. **Conversational Memory**
+   - Chat history and context
+   - Question-answer pairs
+   - Problem-solution patterns
+
+2. **Code Memory**
+   - Code snippets and patterns
+   - Function implementations
+   - Architecture decisions
+
+3. **Project Memory**
+   - Project-specific context
+   - File structures and patterns
+   - Configuration preferences
+
+4. **User Memory**
+   - Coding style preferences
+   - Frequently used patterns
+   - Personal shortcuts and habits
+
+### Vector Storage
+
+Built on PostgreSQL with pgvector for:
+- **Semantic Search**: Find relevant memories by meaning, not just keywords
+- **Context Similarity**: Match similar coding scenarios
+- **Pattern Recognition**: Identify recurring patterns and preferences
+- **Intelligent Retrieval**: Surface the most relevant memories for current context
+
+## 🔐 Security & Privacy
+
+### Data Protection
+- **Local Storage**: All data stays on your machine
+- **Encryption**: Data encrypted at rest and in transit
+- **Access Control**: Role-based permissions and API keys
+- **GDPR Compliance**: Built-in privacy controls and data rights
+
+### Security Features
+- JWT authentication
+- API key management
+- Rate limiting and DDoS protection
+- Audit logging
+- Multi-factor authentication support
+
+## 📊 Monitoring & Analytics
+
+### Built-in Dashboards
+- **Memory Usage**: Track memory growth and patterns
+- **Search Performance**: Monitor query performance
+- **User Activity**: Session and usage analytics
+- **System Health**: Infrastructure monitoring
 
 ### Prometheus Metrics
+```
+memory_operations_total
+memory_search_duration_seconds
+active_sessions_gauge
+memory_storage_bytes
+```
 
-Key metrics exported to Prometheus:
-- `vector_search_duration_ms` - Search latency
-- `embedding_generation_duration_ms` - Embedding generation time
-- `memory_usage_mb` - System memory usage
-- `database_connections` - Active DB connections
-- `cache_hit_rate` - Cache performance
+## 🚀 Advanced Features
 
-### Default Alerts
+### Intelligent Memory Management
+- **Automatic Cleanup**: Remove stale or irrelevant memories
+- **Memory Consolidation**: Merge similar memories
+- **Importance Scoring**: Prioritize valuable memories
+- **Context Awareness**: Adapt memory relevance to current project
 
-- High search latency (>5s warning, >10s critical)
-- High memory usage (>8GB warning, >12GB critical)
-- High CPU usage (>80% for 5 minutes)
-- Low cache hit rate (<50% for 5 minutes)
-- High error rate (>10 errors/minute)
+### Performance Optimization
+- **Vector Compression**: Reduce storage requirements
+- **Caching**: Redis-based result caching
+- **Batch Processing**: Efficient bulk operations
+- **Query Optimization**: Automatic PostgreSQL tuning
 
-## 🛠️ Advanced Configuration
+### Integration Ecosystem
+- **API Access**: RESTful API for custom integrations
+- **Webhook Support**: Real-time notifications
+- **Plugin System**: Extend functionality
+- **Export/Import**: Backup and migrate memories
 
-### Custom Embedding Providers
+## 📁 Project Structure
+
+```
+├── src/                    # Core MCP server implementation
+│   ├── mcp.py             # MCP protocol implementation
+│   ├── memory.py          # Memory storage and retrieval
+│   ├── models.py          # Data models and schemas
+│   └── websocket.py       # Real-time communication
+├── auth/                  # Authentication and security
+├── config/                # Configuration management
+├── scripts/               # Setup and maintenance scripts
+├── monitoring/            # Observability and metrics
+├── examples/              # Client integration examples
+└── docker-compose.yml     # Container orchestration
+```
+
+## 🤝 Usage Examples
+
+### Storing Code Patterns
 
 ```python
-from embedding_pipeline import BaseEmbeddingProvider, EmbeddingConfig
-
-class CustomProvider(BaseEmbeddingProvider):
-    async def generate_embeddings(self, texts: List[str]) -> List[List[float]]:
-        # Implement custom embedding logic
-        return [[0.1] * 1536 for _ in texts]
-
-# Register custom provider
-config = EmbeddingConfig(
-    provider=EmbeddingProvider.CUSTOM,
-    model_name="custom-model",
-    dimensions=1536,
-    max_tokens=512
+# Via MCP in Claude Code
+await store_memory(
+    content="Always use TypeScript strict mode for new projects",
+    context={"project": "web-app", "language": "typescript"},
+    tags=["typescript", "configuration", "best-practice"]
 )
 ```
 
-### Custom Deduplication Strategies
+### Searching Previous Solutions
 
 ```python
-from memory_deduplicator import DeduplicationConfig, DeduplicationStrategy
-
-config = DeduplicationConfig(
-    strategy=DeduplicationStrategy.HYBRID,
-    similarity_threshold=0.85,
-    text_similarity_threshold=0.80,
-    enable_stemming=True,
-    remove_stopwords=True,
-    temporal_window_hours=24
+# Find similar problems you've solved before
+memories = await search_memory(
+    query="how to handle async errors in Python",
+    limit=5
 )
 ```
 
-## 🔒 Security Considerations
+### Project Context Loading
 
-- **Row Level Security (RLS)**: Automatically isolates user data
-- **Encryption**: Backup encryption with configurable keys
-- **API Keys**: Secure storage and rotation of embedding provider keys
-- **Network Security**: Configurable firewalls and access controls
-
-## 📈 Scaling Recommendations
-
-### Small Scale (< 100K vectors)
-- Use HNSW indexes with m=16, ef_construction=64
-- Single PostgreSQL instance with 4GB RAM
-- Basic monitoring and alerting
-
-### Medium Scale (100K - 1M vectors)
-- HNSW indexes with optimized parameters
-- Read replicas for query distribution
-- Redis cluster for caching
-- Advanced monitoring with Prometheus/Grafana
-
-### Large Scale (> 1M vectors)
-- Partitioned tables by user_id or date
-- Multiple specialized indexes
-- Distributed caching layer
-- Horizontal scaling with sharding
+```python
+# Automatically load project context when switching projects
+context = await load_context("my-react-app")
+# Context includes: file patterns, coding style, dependencies, etc.
+```
 
 ## 🧹 Code Quality & Linting
 
@@ -435,7 +323,7 @@ make setup-dev
 
 The project includes a comprehensive GitHub Actions workflow (`.github/workflows/lint.yml`) that runs:
 
-- Multi-version Python linting (3.8-3.12)
+- Multi-version Python linting (3.12+ recommended, tested on 3.8-3.12)
 - Security scanning with Bandit, Safety, and Semgrep
 - Code quality analysis with Vulture, Radon, and Xenon
 - Docker, Shell, YAML, and SQL linting
@@ -478,14 +366,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🆘 Support
 
 For issues and questions:
-1. Check the documentation and examples
-2. Search existing issues in the repository
-3. Create a detailed issue with reproduction steps
-4. Join our community discussions
+- GitHub Issues: [Report bugs and feature requests](https://github.com/Angleito/Claude-CursorMemoryMCP/issues)
+- Documentation: [Full documentation](https://github.com/Angleito/Claude-CursorMemoryMCP/wiki)
+- Discord: [Join our community](https://discord.gg/your-server)
 
 ## 🙏 Acknowledgments
 
-- pgvector team for the excellent PostgreSQL extension
-- OpenAI, Cohere, and HuggingFace for embedding APIs
-- PostgreSQL and Redis communities
-- All contributors and users of this project
+- [Anthropic](https://anthropic.com) for the MCP protocol
+- [Cursor](https://cursor.sh) for AI-powered coding
+- [pgvector](https://github.com/pgvector/pgvector) for vector similarity search
+- Open source community for the amazing tools and libraries

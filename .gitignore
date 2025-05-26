@@ -133,6 +133,9 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 
+# Ruff cache
+.ruff_cache/
+
 # Cython debug symbols
 cython_debug/
 
@@ -248,6 +251,14 @@ secrets/
 ssl/
 certs/
 private/
+
+# Linting and analysis reports
+reports/
+bandit-report.json
+safety-report.json
+vulture-report.txt
+*.sarif
+.secrets.baseline.bak
 
 # Backup files
 *.bak

@@ -1,0 +1,82 @@
+[flake8]
+# Flake8 configuration for mem0ai
+# Compatible with Black formatting
+
+max-line-length = 88
+max-complexity = 12
+
+# Error codes to ignore
+extend-ignore = 
+    # Line too long (handled by Black)
+    E501,
+    # Line break before binary operator (conflict with Black)
+    W503,
+    # Whitespace before ':' (conflict with Black)
+    E203,
+    # Multiple spaces after ',' (conflict with Black)
+    E241,
+    # Line break after binary operator
+    W504,
+    # Missing docstring in public module
+    D100,
+    # Missing docstring in public class
+    D101,
+    # Missing docstring in public method
+    D102,
+    # Missing docstring in public function
+    D103,
+    # Missing docstring in public package
+    D104,
+    # Missing docstring in __init__
+    D107
+
+# Files to exclude
+exclude =
+    .git,
+    __pycache__,
+    .pytest_cache,
+    .mypy_cache,
+    .ruff_cache,
+    build,
+    dist,
+    *.egg-info,
+    venv,
+    env,
+    .venv,
+    .env,
+    logs,
+    htmlcov,
+    reports,
+    node_modules
+
+# Per-file ignores
+per-file-ignores =
+    # Tests can use assert statements and magic numbers
+    tests/*.py:S101,PLR2004,D
+    # Scripts can use print statements
+    scripts/*.py:T20
+    # __init__.py files don't need docstrings
+    __init__.py:D104
+    # Configuration files
+    config/*.py:D
+
+# Docstring convention
+docstring-convention = google
+
+# Import order
+import-order-style = google
+application-import-names = mem0ai,src,auth,security,monitoring
+
+# Plugin configurations
+inline-quotes = double
+multiline-quotes = double
+
+# Complexity thresholds
+max-cognitive-complexity = 12
+max-expression-complexity = 7
+max-function-length = 50
+max-module-length = 1000
+
+# Naming conventions
+classmethod-decorators = classmethod
+staticmethod-decorators = staticmethod

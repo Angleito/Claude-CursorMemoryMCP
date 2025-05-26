@@ -21,7 +21,7 @@ The project uses a multi-layered approach to code quality:
 Ruff is configured as the primary linting tool, replacing multiple tools:
 - **Replaces**: flake8, isort, pyupgrade, autoflake
 - **Rules enabled**: 200+ rules across multiple categories
-- **Target Python**: 3.8+
+- **Target Python**: 3.12+ (recommended, supports 3.8+)
 - **Line length**: 88 characters
 - **Performance**: ~10-100x faster than alternatives
 
@@ -51,7 +51,7 @@ select = [
 
 Black ensures consistent code formatting:
 - **Line length**: 88 characters
-- **Target Python**: 3.8-3.12
+- **Target Python**: 3.12+ (recommended, supports 3.8-3.12)
 - **Style**: Opinionated, minimal configuration
 - **Integration**: Works seamlessly with Ruff
 
@@ -61,7 +61,7 @@ Black ensures consistent code formatting:
 
 MyPy provides static type analysis:
 - **Strict mode**: Enabled for better type safety
-- **Target Python**: 3.8+
+- **Target Python**: 3.12+ (recommended, supports 3.8+)
 - **External libraries**: Type stubs for major dependencies
 - **Configuration**: Comprehensive error reporting
 
@@ -241,7 +241,7 @@ Add to `.vscode/settings.json`:
 
 The CI/CD pipeline includes:
 
-1. **Multi-version testing**: Python 3.8-3.12
+1. **Multi-version testing**: Python 3.12+ (tested on 3.8-3.12)
 2. **Parallel jobs**: Linting, security, quality analysis
 3. **Artifact collection**: Reports and logs
 4. **SARIF upload**: Security findings to GitHub Security

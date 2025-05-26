@@ -1,54 +1,172 @@
 [bandit]
-# Bandit configuration file
+# Bandit security configuration for mem0ai
+
+# Directories to exclude from scanning
 exclude_dirs = [
     "tests",
     "venv",
-    "env",
+    "env", 
     ".venv",
     ".env",
     "logs",
     "htmlcov",
-    ".git",
+    "reports",
+    "build",
+    "dist",
+    "*.egg-info",
     "__pycache__",
     ".pytest_cache",
     ".mypy_cache",
-    "build",
-    "dist",
-    "*.egg-info"
+    ".ruff_cache"
 ]
 
-# Skip certain test IDs that are too restrictive for this project
+# Tests to skip
 skips = [
-    "B101",  # assert_used - allow assert in non-production code
-    "B601",  # paramiko_calls - we may use paramiko legitimately
-    "B602",  # subprocess_popen_with_shell_equals_true - allow when necessary
-    "B603",  # subprocess_without_shell_equals_true - allow subprocess usage
-    "B324",  # hashlib_new_insecure_functions - allow MD5/SHA1 for non-crypto uses
+    "B101",  # assert_used - Allow assert statements
+    "B601",  # paramiko_calls - Allow paramiko usage
+    "B603",  # subprocess_without_shell_equals_true - Allow subprocess usage
+    "B607",  # start_process_with_partial_path - Allow partial paths in process start
 ]
 
-# Test files have different security requirements
-[bandit.assert_used]
-exclude = ["*test*.py", "test_*.py"]
+# Tests to run (if not specified, all tests except skipped ones are run)
+tests = [
+    "B102",  # exec_used
+    "B103",  # set_bad_file_permissions
+    "B104",  # hardcoded_bind_all_interfaces
+    "B105",  # hardcoded_password_string
+    "B106",  # hardcoded_password_funcarg
+    "B107",  # hardcoded_password_default
+    "B108",  # hardcoded_tmp_directory
+    "B110",  # try_except_pass
+    "B112",  # try_except_continue
+    "B201",  # flask_debug_true
+    "B301",  # pickle
+    "B302",  # pickle_loads
+    "B303",  # pickle_dumps
+    "B304",  # ciphers
+    "B305",  # cipher_modes
+    "B306",  # mktemp_q
+    "B307",  # eval
+    "B308",  # mark_safe
+    "B309",  # httpsconnection
+    "B310",  # urllib_urlopen
+    "B311",  # random
+    "B312",  # telnetlib
+    "B313",  # xml_bad_cElementTree
+    "B314",  # xml_bad_ElementTree
+    "B315",  # xml_bad_expatreader
+    "B316",  # xml_bad_expatbuilder
+    "B317",  # xml_bad_sax
+    "B318",  # xml_bad_minidom
+    "B319",  # xml_bad_pulldom
+    "B320",  # xml_bad_etree
+    "B321",  # ftplib
+    "B322",  # input
+    "B323",  # unverified_context
+    "B324",  # hashlib_new_insecure_functions
+    "B325",  # tempnam
+    "B401",  # import_telnetlib
+    "B402",  # import_ftplib
+    "B403",  # import_pickle
+    "B404",  # import_subprocess
+    "B405",  # import_xml_etree
+    "B406",  # import_xml_sax
+    "B407",  # import_xml_expat
+    "B408",  # import_xml_minidom
+    "B409",  # import_xml_pulldom
+    "B410",  # import_lxml
+    "B411",  # import_xmlrpclib
+    "B412",  # import_httpoxy
+    "B413",  # import_pycrypto
+    "B501",  # request_with_no_cert_validation
+    "B502",  # ssl_with_bad_version
+    "B503",  # ssl_with_bad_defaults
+    "B504",  # ssl_with_no_version
+    "B505",  # weak_cryptographic_key
+    "B506",  # yaml_load
+    "B507",  # ssh_no_host_key_verification
+    "B601",  # paramiko_calls
+    "B602",  # subprocess_popen_with_shell_equals_true
+    "B604",  # any_other_function_with_shell_equals_true
+    "B605",  # start_process_with_a_shell
+    "B606",  # start_process_with_no_shell
+    "B608",  # hardcoded_sql_expressions
+    "B609",  # linux_commands_wildcard_injection
+    "B610",  # django_extra_used
+    "B611",  # django_rawsql_used
+    "B701",  # jinja2_autoescape_false
+    "B702",  # use_of_mako_templates
+    "B703",  # django_mark_safe
+]
 
-# Severity levels to report
-confidence = "medium"
-severity = "medium"
+# Confidence levels: LOW, MEDIUM, HIGH
+confidence = "MEDIUM"
 
-# Formats available: csv, json, txt, xml, yaml
+# Severity levels: LOW, MEDIUM, HIGH
+severity = "MEDIUM"
+
+# Output format: csv, custom, html, json, screen, txt, xml, yaml
 format = "txt"
 
-# Output file (optional)
-# output = "bandit-report.txt"
+# Show only issues with the given confidence level or higher
+assert_used = {
+    "skips": ["*_test.py", "*test*.py"],
+    "word_list": ["nose.tools.assert_is_not_none"]
+}
 
-# Test IDs to include (if not specified, all tests are run)
-# tests = ["B201", "B301"]
+# Custom baseline for ignoring known issues
+[bandit.baseline]
+# Path to baseline file (optional)
+# baseline = ".bandit_baseline"
 
-# Python files to analyze
-include = ["*.py"]
+# Plugin configuration
+[bandit.plugins]
+# Enable all plugins by default
+# Specific plugin configurations can be added here
 
-# Exclude patterns
-exclude = [
-    "*/test_*.py",
-    "*/tests/*",
-    "*/*_test.py"
+[bandit.blacklist]
+# Custom blacklist calls (in addition to default)
+calls = [
+    "subprocess.call",
+    "subprocess.check_call", 
+    "subprocess.check_output",
+    "subprocess.run"
+]
+
+[bandit.shell_injection]
+# Subprocess shell injection detection
+subprocess = [
+    "subprocess.Popen",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output", 
+    "subprocess.run"
+]
+
+no_shell = [
+    "os.execl",
+    "os.execle", 
+    "os.execlp",
+    "os.execlpe",
+    "os.execv",
+    "os.execve",
+    "os.execvp",
+    "os.execvpe",
+    "os.spawnl",
+    "os.spawnle",
+    "os.spawnlp",
+    "os.spawnlpe",
+    "os.spawnv",
+    "os.spawnve",
+    "os.spawnvp", 
+    "os.spawnvpe"
+]
+
+shell = [
+    "os.system",
+    "os.popen",
+    "popen2.Popen3",
+    "popen2.Popen4", 
+    "commands.getoutput",
+    "commands.getstatusoutput"
 ]

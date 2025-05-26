@@ -1,7 +1,8 @@
 #!/bin/bash
-# Setup script for linting infrastructure in mem0ai project
+# Setup script for comprehensive linting and code quality tools
+# Usage: ./scripts/setup-linting.sh
 
-set -e  # Exit on any error
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -10,300 +11,292 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
-print_status() {
+# Logging functions
+log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
 
-print_success() {
+log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
-print_warning() {
+log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-print_error() {
+log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Function to check if command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
+# Check if we're in the right directory
+check_project_root() {
+    if [[ ! -f "pyproject.toml" ]]; then
+        log_error "pyproject.toml not found. Please run this script from the project root."
+        exit 1
+    fi
+    log_success "Project root directory confirmed"
 }
 
-# Main setup function
-main() {
-    print_status "Setting up linting infrastructure for mem0ai project"
+# Check Python version
+check_python_version() {
+    local python_version
+    python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
+    local major_version
+    major_version=$(echo "$python_version" | cut -d'.' -f1)
+    local minor_version
+    minor_version=$(echo "$python_version" | cut -d'.' -f2)
     
-    # Check if we're in the right directory
-    if [[ ! -f "pyproject.toml" ]]; then
-        print_error "pyproject.toml not found. Please run this script from the project root."
+    if [[ $major_version -lt 3 ]] || [[ $major_version -eq 3 && $minor_version -lt 8 ]]; then
+        log_error "Python 3.8+ required. Found: $python_version"
         exit 1
     fi
+    log_success "Python version check passed: $python_version"
+}
+
+# Create necessary directories
+create_directories() {
+    log_info "Creating necessary directories..."
+    mkdir -p logs
+    mkdir -p reports
+    mkdir -p htmlcov
+    mkdir -p .github/workflows
+    log_success "Directories created"
+}
+
+# Install development dependencies
+install_dependencies() {
+    log_info "Installing development dependencies..."
     
-    # 1. Check Python version
-    print_status "Checking Python version..."
-    python_version=$(python3 --version 2>&1 | awk '{print $2}')
-    required_version="3.8"
-    
-    if [[ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]]; then
-        print_error "Python $required_version or higher is required. Found: $python_version"
-        exit 1
-    fi
-    print_success "Python version check passed: $python_version"
-    
-    # 2. Upgrade pip
-    print_status "Upgrading pip..."
+    # Upgrade pip first
     python3 -m pip install --upgrade pip
     
-    # 3. Install development dependencies
-    print_status "Installing development dependencies..."
+    # Install requirements
     if [[ -f "requirements-dev.txt" ]]; then
-        pip install -r requirements-dev.txt
-        print_success "Development dependencies installed"
+        python3 -m pip install -r requirements-dev.txt
+        log_success "Development dependencies installed"
     else
-        print_warning "requirements-dev.txt not found, skipping dev dependencies"
+        log_warning "requirements-dev.txt not found, installing core linting tools..."
+        python3 -m pip install \
+            ruff>=0.1.9 \
+            black>=23.12.0 \
+            isort>=5.13.0 \
+            mypy>=1.8.0 \
+            bandit[toml]>=1.7.5 \
+            safety>=2.3.0 \
+            vulture>=2.10 \
+            radon>=6.0.1 \
+            xenon>=0.9.1 \
+            pre-commit>=3.6.0 \
+            detect-secrets>=1.4.0 \
+            pytest>=7.4.0 \
+            pytest-cov>=4.1.0 \
+            yamllint>=1.33.0
+        log_success "Core linting tools installed"
     fi
     
-    # 4. Install production dependencies
-    print_status "Installing production dependencies..."
+    # Install production dependencies if available
     if [[ -f "requirements.txt" ]]; then
-        pip install -r requirements.txt
-        print_success "Production dependencies installed"
-    else
-        print_warning "requirements.txt not found, skipping production dependencies"
+        python3 -m pip install -r requirements.txt
+        log_success "Production dependencies installed"
     fi
+}
+
+# Setup pre-commit hooks
+setup_precommit() {
+    log_info "Setting up pre-commit hooks..."
     
-    # 5. Create directories
-    print_status "Creating necessary directories..."
-    mkdir -p .github/workflows
-    mkdir -p reports
-    mkdir -p tests
-    mkdir -p logs
-    print_success "Directories created"
-    
-    # 6. Initialize git hooks (pre-commit)
-    print_status "Setting up pre-commit hooks..."
-    if command_exists pre-commit; then
+    if command -v pre-commit &> /dev/null; then
+        # Install pre-commit hooks
         pre-commit install
         pre-commit install --hook-type commit-msg
-        print_success "Pre-commit hooks installed"
+        pre-commit install --hook-type pre-push
+        
+        # Update hooks to latest versions
+        pre-commit autoupdate
+        
+        log_success "Pre-commit hooks installed and updated"
     else
-        print_warning "pre-commit not found, please install it manually"
+        log_error "pre-commit not found. Installing..."
+        python3 -m pip install pre-commit
+        pre-commit install
+        log_success "Pre-commit installed and configured"
     fi
+}
+
+# Initialize detect-secrets baseline
+setup_detect_secrets() {
+    log_info "Setting up detect-secrets baseline..."
     
-    # 7. Initialize secrets baseline
-    print_status "Initializing secrets baseline..."
-    if command_exists detect-secrets; then
-        if [[ ! -f ".secrets.baseline" ]]; then
-            detect-secrets scan --baseline .secrets.baseline
-            print_success "Secrets baseline created"
-        else
-            print_status "Secrets baseline already exists"
-        fi
+    if [[ ! -f ".secrets.baseline" ]]; then
+        detect-secrets scan --baseline .secrets.baseline
+        log_success "Secrets baseline created"
     else
-        print_warning "detect-secrets not found, please install it manually"
+        log_info "Updating existing secrets baseline..."
+        detect-secrets scan --baseline .secrets.baseline --update
+        log_success "Secrets baseline updated"
     fi
+}
+
+# Run initial linting check
+run_initial_checks() {
+    log_info "Running initial code quality checks..."
     
-    # 8. Create .gitignore additions if needed
-    print_status "Updating .gitignore..."
-    gitignore_additions="
-# Linting and testing
-.ruff_cache/
-.mypy_cache/
-.pytest_cache/
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-.hypothesis/
-.tox/
-
-# Reports
-reports/
-bandit-report.json
-safety-report.json
-semgrep.json
-
-# Secrets
-.secrets.baseline
-
-# Environment
-.env
-.venv/
-venv/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-logs/*.log
-logs/*.out
-*.log
-"
+    # Create reports directory if it doesn't exist
+    mkdir -p reports
     
-    if [[ -f ".gitignore" ]]; then
-        echo "$gitignore_additions" >> .gitignore
-        print_success ".gitignore updated"
+    # Run Ruff check (non-blocking)
+    log_info "Running Ruff linter..."
+    if ruff check . --output-format=json > reports/ruff-report.json 2>/dev/null; then
+        log_success "Ruff check completed successfully"
     else
-        echo "$gitignore_additions" > .gitignore
-        print_success ".gitignore created"
+        log_warning "Ruff found issues (see reports/ruff-report.json)"
     fi
     
-    # 9. Validate configurations
-    print_status "Validating configurations..."
-    
-    # Validate pyproject.toml
-    if command_exists python3; then
-        python3 -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))" 2>/dev/null
-        if [[ $? -eq 0 ]]; then
-            print_success "pyproject.toml is valid"
-        else
-            print_error "pyproject.toml is invalid"
-        fi
+    # Run Black check (non-blocking)
+    log_info "Running Black formatter check..."
+    if black --check . > reports/black-report.txt 2>&1; then
+        log_success "Black formatting check passed"
+    else
+        log_warning "Black found formatting issues (see reports/black-report.txt)"
     fi
+    
+    # Run MyPy check (non-blocking)
+    log_info "Running MyPy type checking..."
+    if mypy src/ auth/ security/ monitoring/ --ignore-missing-imports > reports/mypy-report.txt 2>&1; then
+        log_success "MyPy type checking passed"
+    else
+        log_warning "MyPy found type issues (see reports/mypy-report.txt)"
+    fi
+    
+    # Run Bandit security scan (non-blocking)
+    log_info "Running Bandit security scan..."
+    if bandit -r . -f json -o reports/bandit-report.json 2>/dev/null; then
+        log_success "Bandit security scan completed"
+    else
+        log_warning "Bandit found security issues (see reports/bandit-report.json)"
+    fi
+    
+    # Run Safety dependency check (non-blocking)
+    log_info "Running Safety dependency check..."
+    if safety check --json --output reports/safety-report.json 2>/dev/null; then
+        log_success "Safety dependency check passed"
+    else
+        log_warning "Safety found vulnerable dependencies (see reports/safety-report.json)"
+    fi
+    
+    log_success "Initial code quality checks completed. See reports/ directory for details."
+}
+
+# Validate configuration files
+validate_configs() {
+    log_info "Validating configuration files..."
     
     # Validate YAML files
-    if command_exists yamllint; then
-        if yamllint .pre-commit-config.yaml >/dev/null 2>&1; then
-            print_success ".pre-commit-config.yaml is valid"
+    if command -v yamllint &> /dev/null; then
+        if yamllint . > reports/yamllint-report.txt 2>&1; then
+            log_success "YAML files are valid"
         else
-            print_warning ".pre-commit-config.yaml has issues"
+            log_warning "YAML validation issues found (see reports/yamllint-report.txt)"
         fi
     fi
     
-    # 10. Run initial setup
-    print_status "Running initial linting setup..."
+    # Validate JSON files
+    log_info "Validating JSON files..."
+    json_valid=true
+    while IFS= read -r -d '' file; do
+        if ! python3 -m json.tool "$file" > /dev/null 2>&1; then
+            log_warning "Invalid JSON file: $file"
+            json_valid=false
+        fi
+    done < <(find . -name "*.json" -not -path "./node_modules/*" -not -path "./.git/*" -print0)
     
-    # Update pre-commit hooks
-    if command_exists pre-commit; then
-        pre-commit autoupdate
-        print_success "Pre-commit hooks updated"
+    if $json_valid; then
+        log_success "All JSON files are valid"
     fi
     
-    # 11. Test the setup
-    print_status "Testing linting setup..."
-    
-    if command_exists ruff; then
-        ruff check . --statistics >/dev/null 2>&1
-        print_success "Ruff setup test passed"
+    # Validate TOML files
+    log_info "Validating TOML files..."
+    if python3 -c "import tomllib; tomllib.load(open('pyproject.toml', 'rb'))" 2>/dev/null; then
+        log_success "TOML files are valid"
+    else
+        log_warning "TOML validation failed"
     fi
-    
-    if command_exists black; then
-        black --check . >/dev/null 2>&1 || true
-        print_success "Black setup test completed"
-    fi
-    
-    if command_exists mypy; then
-        mypy --version >/dev/null 2>&1
-        print_success "MyPy setup test passed"
-    fi
-    
-    # 12. Create initial reports directory structure
-    print_status "Setting up reports structure..."
-    mkdir -p reports/{security,quality,coverage}
-    touch reports/.gitkeep
-    print_success "Reports structure created"
-    
-    # 13. Display summary
-    echo
-    print_status "=== SETUP SUMMARY ==="
-    echo
-    print_success "✅ Linting infrastructure setup complete!"
-    echo
-    print_status "Available commands:"
-    echo "  make lint          - Run all linting checks"
-    echo "  make lint-fix      - Run linting with auto-fix"
-    echo "  make security      - Run security checks only"
-    echo "  make type-check    - Run type checking"
-    echo "  make pre-commit    - Run pre-commit hooks"
-    echo "  ./scripts/lint.sh  - Comprehensive linting script"
-    echo
-    print_status "Configuration files created:"
-    echo "  ✅ pyproject.toml - Main configuration"
-    echo "  ✅ .pre-commit-config.yaml - Pre-commit hooks"
-    echo "  ✅ .bandit - Security scanning config"
-    echo "  ✅ requirements-dev.txt - Development dependencies"
-    echo "  ✅ Makefile - Development commands"
-    echo "  ✅ .github/workflows/lint.yml - CI/CD pipeline"
-    echo
-    print_status "Next steps:"
-    echo "  1. Review and customize configurations in pyproject.toml"
-    echo "  2. Run 'make lint' to test the setup"
-    echo "  3. Run 'pre-commit run --all-files' to test pre-commit hooks"
-    echo "  4. Commit the new linting infrastructure"
-    echo
-    print_success "Happy linting! 🚀"
 }
 
-# Help function
-show_help() {
-    echo "Usage: $0 [OPTIONS]"
-    echo
-    echo "Setup script for linting infrastructure in mem0ai project"
-    echo
-    echo "Options:"
-    echo "  -h, --help     Show this help message"
-    echo "  --skip-install Skip dependency installation"
-    echo "  --minimal      Minimal setup (essential tools only)"
-    echo
-    echo "This script will:"
-    echo "  - Install development dependencies"
-    echo "  - Set up pre-commit hooks"
-    echo "  - Create configuration files"
-    echo "  - Initialize secrets baseline"
-    echo "  - Validate setup"
+# Setup IDE configurations
+setup_ide_configs() {
+    log_info "Setting up IDE configurations..."
+    
+    # VS Code settings
+    if [[ ! -d ".vscode" ]]; then
+        mkdir -p .vscode
+        cat > .vscode/settings.json << 'EOF'
+{
+    "python.defaultInterpreterPath": "./venv/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.ruffEnabled": true,
+    "python.linting.banditEnabled": true,
+    "python.linting.mypyEnabled": true,
+    "python.formatting.provider": "black",
+    "python.sortImports.args": ["--profile=black"],
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    },
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true,
+        "**/reports": true
+    }
+}
+EOF
+        log_success "VS Code settings configured"
+    fi
 }
 
-# Minimal setup (essential tools only)
-minimal_setup() {
-    print_status "Running minimal linting setup"
-    
-    # Install only essential tools
-    pip install ruff black mypy pre-commit
-    
-    # Setup pre-commit
-    if command_exists pre-commit; then
-        pre-commit install
-    fi
-    
-    # Create secrets baseline
-    if command_exists detect-secrets; then
-        detect-secrets scan --baseline .secrets.baseline
-    fi
-    
-    print_success "Minimal setup completed"
+# Display usage instructions
+show_usage() {
+    log_info "Linting setup complete! Here are some useful commands:"
+    echo ""
+    echo "  make lint           # Run all linting checks"
+    echo "  make lint-fix       # Run linting with auto-fix"
+    echo "  make type-check     # Run type checking"
+    echo "  make security       # Run security scans"
+    echo "  make test-cov       # Run tests with coverage"
+    echo "  make pre-commit     # Run pre-commit hooks"
+    echo "  make ci             # Run full CI pipeline"
+    echo ""
+    echo "Configuration files:"
+    echo "  pyproject.toml      # Main configuration"
+    echo "  .pre-commit-config.yaml  # Pre-commit hooks"
+    echo "  .flake8             # Flake8 configuration"
+    echo "  .isort.cfg          # Import sorting"
+    echo "  mypy.ini            # Type checking"
+    echo "  .bandit             # Security scanning"
+    echo ""
+    echo "Reports will be saved in the 'reports/' directory."
 }
 
-# Parse command line arguments
-case "${1:-}" in
-    -h|--help)
-        show_help
-        exit 0
-        ;;
-    --minimal)
-        minimal_setup
-        ;;
-    --skip-install)
-        print_status "Skipping dependency installation"
-        # Run main without pip installs
-        ;;
-    "")
-        main
-        ;;
-    *)
-        print_error "Unknown option: $1"
-        show_help
-        exit 1
-        ;;
-esac
+# Main execution
+main() {
+    log_info "Starting comprehensive linting setup for mem0ai..."
+    
+    check_project_root
+    check_python_version
+    create_directories
+    install_dependencies
+    setup_precommit
+    setup_detect_secrets
+    validate_configs
+    setup_ide_configs
+    run_initial_checks
+    
+    log_success "Linting setup completed successfully!"
+    show_usage
+}
+
+# Execute main function
+main "$@"
