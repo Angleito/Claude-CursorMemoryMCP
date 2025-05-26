@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from typing import Annotated
-from typing import Optional
 
 from fastapi import Depends
 from fastapi import HTTPException
@@ -43,9 +42,9 @@ class AuthorizationError(HTTPException):
 
 
 async def get_current_user_from_token(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     request: Request = None,
-) -> Optional[User]:
+) -> User | None:
     """Get current user from JWT token."""
     if not credentials:
         return None
@@ -78,23 +77,44 @@ async def get_current_user_from_token(
 
 async def get_current_user_from_api_key(
     request: Request, api_key_repo: APIKeyRepository = Depends()
-) -> Optional[User]:
+) -> User | None:
     """Get current user from API key."""
-    # Check for API key in headers
-    api_key = None
-
-    # Try Authorization header with "ApiKey" scheme
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("ApiKey "):
-        api_key = auth_header[7:]  # Remove "ApiKey " prefix
-
-    # Try X-API-Key header
-    if not api_key:
-        api_key = request.headers.get("X-API-Key")
-
+    # Extract API key from headers
+    api_key = _extract_api_key_from_headers(request)
     if not api_key:
         return None
 
+    # Validate and get user from API key
+    user = await _validate_and_get_user_from_api_key(api_key, api_key_repo)
+    if not user:
+        return None
+
+    # Get API key object for state update
+    api_key_obj = await api_key_repo.get_by_key(api_key)
+    if api_key_obj:
+        # Update API key last used
+        await api_key_repo.update_last_used(api_key_obj.id)
+        # Add API key info to request state
+        request.state.api_key = api_key_obj
+
+    return user
+
+
+def _extract_api_key_from_headers(request: Request) -> str | None:
+    """Extract API key from request headers."""
+    # Try Authorization header with "ApiKey" scheme
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("ApiKey "):
+        return auth_header[7:]  # Remove "ApiKey " prefix
+
+    # Try X-API-Key header
+    return request.headers.get("X-API-Key")
+
+
+async def _validate_and_get_user_from_api_key(
+    api_key: str, api_key_repo: APIKeyRepository
+) -> User | None:
+    """Validate API key and return associated user."""
     # Validate API key format
     if not api_key.startswith("mk_"):
         return None
@@ -119,18 +139,12 @@ async def get_current_user_from_api_key(
     if not user or user.status != "active":
         return None
 
-    # Update API key last used
-    await api_key_repo.update_last_used(api_key_obj.id)
-
-    # Add API key info to request state
-    request.state.api_key = api_key_obj
-
     return user
 
 
 async def get_current_user(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> User:
     """Get current authenticated user (required)."""
     user = None
@@ -170,8 +184,8 @@ async def get_current_user(
 
 async def get_current_user_optional(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-) -> Optional[User]:
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> User | None:
     """Get current authenticated user (optional)."""
     try:
         return await get_current_user(request, credentials)
@@ -208,7 +222,7 @@ async def get_current_user_permissions(
 
 # Type annotations for dependency injection
 CurrentUser = Annotated[User, Depends(get_current_user)]
-CurrentUserOptional = Annotated[Optional[User], Depends(get_current_user_optional)]
+CurrentUserOptional = Annotated[User | None, Depends(get_current_user_optional)]
 CurrentActiveUser = Annotated[User, Depends(get_current_active_user)]
 CurrentAdminUser = Annotated[User, Depends(get_current_admin_user)]
 CurrentUserPermissions = Annotated[list[str], Depends(get_current_user_permissions)]

@@ -309,7 +309,7 @@ done
 # Configure log rotation
 log_action "📝 Configuring log rotation..."
 cat > /etc/logrotate.d/mem0ai << 'EOF'
-/opt/mem0ai/logs/*.log {
+/mem0ai/logs/*.log {
     daily
     missingok
     rotate 30
@@ -418,8 +418,8 @@ docker info | grep -E "(Security|Logging|Storage)"
 echo ""
 
 echo "=== SSL Certificate Status ==="
-if [[ -f /opt/mem0ai/ssl/live/*/cert.pem ]]; then
-    openssl x509 -in /opt/mem0ai/ssl/live/*/cert.pem -text -noout | grep -E "(Not Before|Not After)"
+if [[ -f /mem0ai/ssl/live/*/cert.pem ]]; then
+    openssl x509 -in /mem0ai/ssl/live/*/cert.pem -text -noout | grep -E "(Not Before|Not After)"
 fi
 echo ""
 
@@ -443,13 +443,13 @@ chmod +x /usr/local/bin/security-audit.sh
 # Create admin user for Mem0AI (non-root)
 log_action "👤 Creating mem0ai system user..."
 if ! id -u mem0ai &>/dev/null; then
-    useradd -r -s /bin/bash -d /opt/mem0ai -m mem0ai
+    useradd -r -s /bin/bash -d /mem0ai -m mem0ai
     usermod -aG docker mem0ai
 fi
 
 # Set up directory structure
-mkdir -p /opt/mem0ai
-chown -R mem0ai:mem0ai /opt/mem0ai
+mkdir -p /mem0ai
+chown -R mem0ai:mem0ai /mem0ai
 
 # Restart services
 log_action "🔄 Restarting security services..."

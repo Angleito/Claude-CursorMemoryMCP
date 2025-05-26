@@ -4,9 +4,6 @@ import uuid
 from datetime import datetime
 from datetime import timedelta
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
 
 from fastapi import HTTPException
 from fastapi import status
@@ -21,6 +18,9 @@ from auth.security import security_manager
 from database.api_key_repository import APIKeyRepository
 from monitoring.audit_logger import audit_logger
 
+# API key limits
+MAX_API_KEYS_PER_USER = 10
+
 
 class APIKeyManager:
     """API Key management class."""
@@ -32,7 +32,7 @@ class APIKeyManager:
         self,
         user: User,
         key_data: APIKeyCreate,
-        created_by_user_id: Optional[uuid.UUID] = None,
+        created_by_user_id: uuid.UUID | None = None,
     ) -> APIKeyResponse:
         """Create a new API key for a user."""
         # Check if user can create API keys
@@ -46,7 +46,7 @@ class APIKeyManager:
         existing_keys = await self.api_key_repo.get_user_api_keys(
             user.id, active_only=True
         )
-        if len(existing_keys) >= 10:  # Max 10 API keys per user
+        if len(existing_keys) >= MAX_API_KEYS_PER_USER:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Maximum number of API keys reached",
@@ -107,7 +107,7 @@ class APIKeyManager:
 
     async def get_user_api_keys(
         self, user: User, requesting_user: User
-    ) -> List[APIKey]:
+    ) -> list[APIKey]:
         """Get API keys for a user."""
         # Check permissions
         if user.id != requesting_user.id and not rbac_manager.has_permission(
@@ -129,32 +129,30 @@ class APIKeyManager:
             )
 
         # Check permissions
-        if api_key.user_id != requesting_user.id:
-            if not rbac_manager.has_permission(
+        if api_key.user_id != requesting_user.id and not rbac_manager.has_permission(
                 requesting_user, Permission.API_KEYS_READ
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: Cannot view API key",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied: Cannot view API key",
+            )
 
         return api_key
 
     async def update_api_key(
-        self, key_id: uuid.UUID, updates: Dict[str, Any], requesting_user: User
+        self, key_id: uuid.UUID, updates: dict[str, Any], requesting_user: User
     ) -> APIKey:
         """Update an API key."""
         api_key = await self.get_api_key(key_id, requesting_user)
 
         # Check write permissions
-        if api_key.user_id != requesting_user.id:
-            if not rbac_manager.has_permission(
+        if api_key.user_id != requesting_user.id and not rbac_manager.has_permission(
                 requesting_user, Permission.API_KEYS_WRITE
             ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: Cannot update API key",
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied: Cannot update API key",
+            )
 
         # Validate permission updates
         if "permissions" in updates:
@@ -186,14 +184,13 @@ class APIKeyManager:
         api_key = await self.get_api_key(key_id, requesting_user)
 
         # Check delete permissions
-        if api_key.user_id != requesting_user.id:
-            if not rbac_manager.has_permission(
-                requesting_user, Permission.API_KEYS_DELETE
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: Cannot revoke API key",
-                )
+        if api_key.user_id != requesting_user.id and not rbac_manager.has_permission(
+            requesting_user, Permission.API_KEYS_DELETE
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied: Cannot revoke API key",
+            )
 
         # Deactivate the key
         await self.api_key_repo.update(key_id, {"is_active": False})
@@ -214,14 +211,13 @@ class APIKeyManager:
         api_key = await self.get_api_key(key_id, requesting_user)
 
         # Check delete permissions
-        if api_key.user_id != requesting_user.id:
-            if not rbac_manager.has_permission(
-                requesting_user, Permission.API_KEYS_DELETE
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: Cannot delete API key",
-                )
+        if api_key.user_id != requesting_user.id and not rbac_manager.has_permission(
+            requesting_user, Permission.API_KEYS_DELETE
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied: Cannot delete API key",
+            )
 
         # Delete the key
         await self.api_key_repo.delete(key_id)
@@ -237,7 +233,7 @@ class APIKeyManager:
 
         return True
 
-    async def verify_api_key(self, api_key: str) -> Optional[APIKey]:
+    async def verify_api_key(self, api_key: str) -> APIKey | None:
         """Verify an API key and return the key object if valid."""
         if not api_key.startswith("mk_"):
             return None
@@ -267,14 +263,13 @@ class APIKeyManager:
         api_key = await self.get_api_key(key_id, requesting_user)
 
         # Check write permissions
-        if api_key.user_id != requesting_user.id:
-            if not rbac_manager.has_permission(
-                requesting_user, Permission.API_KEYS_WRITE
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Permission denied: Cannot rotate API key",
-                )
+        if api_key.user_id != requesting_user.id and not rbac_manager.has_permission(
+            requesting_user, Permission.API_KEYS_WRITE
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission denied: Cannot rotate API key",
+            )
 
         # Generate new API key
         new_key, new_hash = security_manager.generate_api_key()
@@ -305,7 +300,7 @@ class APIKeyManager:
             expires_at=updated_key.expires_at,
         )
 
-    async def get_api_key_stats(self, requesting_user: User) -> Dict[str, Any]:
+    async def get_api_key_stats(self, requesting_user: User) -> dict[str, Any]:
         """Get API key usage statistics."""
         if not rbac_manager.has_permission(requesting_user, Permission.API_KEYS_READ):
             raise HTTPException(
@@ -354,8 +349,8 @@ class MCPAPIKeyManager:
         self,
         user: User,
         client_name: str,
-        client_version: Optional[str] = None,
-        capabilities: Optional[List[str]] = None,
+        client_version: str | None = None,
+        capabilities: list[str] | None = None,
     ) -> APIKeyResponse:
         """Create an API key specifically for MCP clients."""
         # Default MCP permissions
@@ -394,7 +389,7 @@ class MCPAPIKeyManager:
         return api_key_response
 
     async def validate_mcp_client(
-        self, api_key: str, client_info: Dict[str, Any]
+        self, api_key: str, client_info: dict[str, Any]
     ) -> bool:
         """Validate MCP client and API key combination."""
         api_key_obj = await self.api_key_manager.verify_api_key(api_key)

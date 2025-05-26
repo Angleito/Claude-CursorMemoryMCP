@@ -7,18 +7,36 @@ import uuid
 from datetime import datetime
 from datetime import timedelta
 from typing import Any
-from typing import Dict
-from typing import List
 from unittest.mock import Mock
 
 import aiohttp
 import jwt
+import structlog
 
 from auth.models import User
 from auth.models import UserRole
 from auth.security import security_manager
 from security.encryption import encryption_manager
 from security.rate_limiting import AdvancedRateLimiter
+
+logger = structlog.get_logger()
+
+# Security test constants
+MIN_API_KEY_LENGTH = 30
+TIMING_ATTACK_THRESHOLD = 0.001  # seconds
+MAX_INPUT_LENGTH = 1000
+PROCESSING_RATE_THRESHOLD = 1001  # requests per window
+CONSENT_RATE_THRESHOLD = 0.8  # 80%
+EXPIRED_DATA_THRESHOLD = 100
+
+# HTTP status codes
+HTTP_OK = 200
+HTTP_INTERNAL_SERVER_ERROR = 500
+
+# Test thresholds
+BRUTE_FORCE_ATTEMPTS = 5
+DEFAULT_SESSION_TIMEOUT_MINUTES = 30
+MAX_LONG_INPUT_LENGTH = 10000
 
 
 class SecurityTestSuite:
@@ -41,7 +59,7 @@ class SecurityTestSuite:
         if self.session:
             await self.session.close()
 
-    def record_test_result(self, test_name: str, passed: bool, details: Dict[str, Any]):
+    def record_test_result(self, test_name: str, passed: bool, details: dict[str, Any]):
         """Record test result."""
         self.test_results.append(
             {
@@ -108,7 +126,7 @@ class SecurityTestSuite:
         test_name = "Password Security"
 
         try:
-            password = "TestPassword123!"
+            password = "TestPassword123!"  # noqa: S105 - Test password
 
             # Test 1: Password hashing
             hash1 = security_manager.hash_password(password)
@@ -172,7 +190,7 @@ class SecurityTestSuite:
             # Test 1: API key generation
             api_key, key_hash = security_manager.generate_api_key()
             assert api_key.startswith("mk_"), "API key should have correct prefix"
-            assert len(api_key) > 30, "API key should be sufficiently long"
+            assert len(api_key) > MIN_API_KEY_LENGTH, "API key should be sufficiently long"
 
             # Test 2: API key hashing
             computed_hash = security_manager.hash_api_key(api_key)
@@ -197,17 +215,17 @@ class SecurityTestSuite:
 
             # Time difference should be minimal (timing attack resistance)
             time_diff = abs(valid_time - invalid_time)
-            assert time_diff < 0.001, "Timing attack resistance check"
+            assert time_diff < TIMING_ATTACK_THRESHOLD, "Timing attack resistance check"
 
             self.record_test_result(
                 test_name,
                 True,
                 {
                     "correct_prefix": api_key.startswith("mk_"),
-                    "sufficient_length": len(api_key) > 30,
+                    "sufficient_length": len(api_key) > MIN_API_KEY_LENGTH,
                     "deterministic_hash": True,
                     "verification_works": True,
-                    "timing_attack_resistant": time_diff < 0.001,
+                    "timing_attack_resistant": time_diff < TIMING_ATTACK_THRESHOLD,
                 },
             )
 
@@ -249,7 +267,7 @@ class SecurityTestSuite:
             assert "suspicion_score" in info, "Suspicion score should be calculated"
 
             # Test 3: Mock high request count for DDoS simulation
-            mock_redis.execute.return_value = [1001, 1001]  # Above threshold
+            mock_redis.execute.return_value = [PROCESSING_RATE_THRESHOLD, PROCESSING_RATE_THRESHOLD]  # Above threshold
             is_allowed, info = await rate_limiter.check_rate_limit(mock_request)
             # This should trigger DDoS protection
 
@@ -511,7 +529,7 @@ class SecurityTestSuite:
 
             # Test token expiration
             short_token = security_manager.create_access_token(
-                token_data, expires_delta=timedelta(minutes=30)
+                token_data, expires_delta=timedelta(minutes=DEFAULT_SESSION_TIMEOUT_MINUTES)
             )
 
             # Verify token has expiration
@@ -551,9 +569,9 @@ class SecurityTestSuite:
             # Test 2: Password strength validation
 
             # Test 3: Input length validation
-            long_input = "A" * 10000
+            long_input = "A" * MAX_LONG_INPUT_LENGTH
             sanitized_long = security_manager.sanitize_input(long_input)
-            assert len(sanitized_long) <= 1000, "Long input should be truncated"
+            assert len(sanitized_long) <= MAX_INPUT_LENGTH, "Long input should be truncated"
 
             # Test 4: Special character handling
             special_chars = "<>&\"'`\x00\n\r"
@@ -571,7 +589,7 @@ class SecurityTestSuite:
                 {
                     "email_validation": True,
                     "password_strength_check": True,
-                    "length_validation": len(sanitized_long) <= 1000,
+                    "length_validation": len(sanitized_long) <= MAX_INPUT_LENGTH,
                     "special_char_handling": "\x00" not in sanitized_special,
                     "unicode_support": True,
                 },
@@ -646,7 +664,7 @@ class SecurityTestSuite:
                 test_name,
                 True,
                 {
-                    "admin_permissions_correct": len(admin_permissions) > 5,
+                    "admin_permissions_correct": len(admin_permissions) > BRUTE_FORCE_ATTEMPTS,
                     "user_permissions_limited": "system:manage" not in user_permissions,
                     "permission_checking_works": can_admin_manage
                     and not can_user_manage,
@@ -658,7 +676,7 @@ class SecurityTestSuite:
             self.record_test_result(test_name, False, {"error": str(e)})
 
     # Comprehensive Security Scan
-    async def run_comprehensive_scan(self) -> Dict[str, Any]:
+    async def run_comprehensive_scan(self) -> dict[str, Any]:
         """Run all security tests."""
         test_methods = [
             self.test_jwt_security,
@@ -704,8 +722,8 @@ class PenetrationTestingTools:
 
     @staticmethod
     async def test_endpoint_security(
-        base_url: str, endpoints: List[str]
-    ) -> Dict[str, Any]:
+        base_url: str, endpoints: list[str]
+    ) -> dict[str, Any]:
         """Test endpoint security."""
         results = {}
 
@@ -734,7 +752,7 @@ class PenetrationTestingTools:
     @staticmethod
     async def _test_sql_injection(
         session: aiohttp.ClientSession, url: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test for SQL injection vulnerabilities."""
         payloads = [
             "'",
@@ -748,7 +766,7 @@ class PenetrationTestingTools:
             try:
                 async with session.get(url, params={"q": payload}) as response:
                     if (
-                        response.status == 500
+                        response.status == HTTP_INTERNAL_SERVER_ERROR
                     ):  # Internal server error might indicate SQL error
                         text = await response.text()
                         if any(
@@ -756,8 +774,8 @@ class PenetrationTestingTools:
                             for keyword in ["sql", "database", "syntax error"]
                         ):
                             vulnerabilities.append(payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("SQL injection test failed for payload %s: %s", payload, e)
 
         return {
             "vulnerable": len(vulnerabilities) > 0,
@@ -765,7 +783,7 @@ class PenetrationTestingTools:
         }
 
     @staticmethod
-    async def _test_xss(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
+    async def _test_xss(session: aiohttp.ClientSession, url: str) -> dict[str, Any]:
         """Test for XSS vulnerabilities."""
         payloads = ["<script>alert('XSS')</script>", "<img src=x onerror=alert('XSS')>"]
 
@@ -776,8 +794,8 @@ class PenetrationTestingTools:
                     text = await response.text()
                     if payload in text:  # Payload reflected without encoding
                         vulnerabilities.append(payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("XSS test failed for payload %s: %s", payload, e)
 
         return {
             "vulnerable": len(vulnerabilities) > 0,
@@ -787,7 +805,7 @@ class PenetrationTestingTools:
     @staticmethod
     async def _test_directory_traversal(
         session: aiohttp.ClientSession, url: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test for directory traversal vulnerabilities."""
         payloads = ["../../../etc/passwd", "..\\..\\..\\windows\\system32\\config\\sam"]
 
@@ -801,8 +819,8 @@ class PenetrationTestingTools:
                         for keyword in ["root:", "administrator", "[system]"]
                     ):
                         vulnerabilities.append(payload)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Directory traversal test failed for payload %s: %s", payload, e)
 
         return {
             "vulnerable": len(vulnerabilities) > 0,
@@ -812,7 +830,7 @@ class PenetrationTestingTools:
     @staticmethod
     async def _test_auth_bypass(
         session: aiohttp.ClientSession, url: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test for authentication bypass."""
         bypass_attempts = [
             {"username": "admin", "password": ""},
@@ -824,10 +842,10 @@ class PenetrationTestingTools:
         for attempt in bypass_attempts:
             try:
                 async with session.post(f"{url}/login", data=attempt) as response:
-                    if response.status == 200 and "dashboard" in await response.text():
+                    if response.status == HTTP_OK and "dashboard" in await response.text():
                         successful_bypasses.append(attempt)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Authentication bypass test failed for attempt %s: %s", attempt, e)
 
         return {
             "vulnerable": len(successful_bypasses) > 0,
@@ -845,7 +863,7 @@ async def run_security_tests():
         if results["failed_tests"] > 0:
             for result in results["test_results"]:
                 if not result["passed"]:
-                    pass
+                    logger.error("Security test failed: %s - %s", result['test_name'], result.get('details', {}))
 
         return results
 

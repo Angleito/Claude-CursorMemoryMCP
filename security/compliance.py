@@ -3,13 +3,14 @@
 import hashlib
 import json
 import uuid
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from abc import ABC
+from abc import abstractmethod
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
-
-from pydantic import BaseModel, Field
+from typing import Any
 
 from config.settings import get_settings
 from monitoring.audit_logger import audit_logger
@@ -17,11 +18,19 @@ from security.data_protection import data_protection
 
 settings = get_settings()
 
+# Compliance score thresholds
+FULLY_COMPLIANT_THRESHOLD = 95
+SUBSTANTIALLY_COMPLIANT_THRESHOLD = 80
+PARTIALLY_COMPLIANT_THRESHOLD = 60
+COMPLIANCE_PERCENTAGE_MULTIPLIER = 100
+MIN_TOTAL_CONTROLS = 0
+EMPTY_RECORDS_COUNT = 0
+
 
 class ComplianceFramework(Enum):
     """Supported compliance frameworks."""
     GDPR = "gdpr"
-    HIPAA = "hipaa" 
+    HIPAA = "hipaa"
     SOC2 = "soc2"
     PCI_DSS = "pci_dss"
     ISO27001 = "iso27001"
@@ -39,7 +48,7 @@ class ComplianceStatus(Enum):
 
 class AuditResult(Enum):
     """Audit result types."""
-    PASS = "pass"
+    PASS = "pass"  # noqa: S105
     FAIL = "fail"
     WARNING = "warning"
     NOT_APPLICABLE = "not_applicable"
@@ -56,9 +65,9 @@ class ComplianceControl:
     required: bool = True
     automated_check: bool = False
     implementation_notes: str = ""
-    evidence_required: List[str] = field(default_factory=list)
+    evidence_required: list[str] = field(default_factory=list)
     responsible_party: str = ""
-    last_assessed: Optional[datetime] = None
+    last_assessed: datetime | None = None
     status: ComplianceStatus = ComplianceStatus.NOT_ASSESSED
 
 
@@ -69,12 +78,12 @@ class AuditEvidence:
     control_id: str
     evidence_type: str  # document, log, screenshot, configuration, etc.
     description: str
-    file_path: Optional[str] = None
-    content: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    file_path: str | None = None
+    content: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     collected_at: datetime = field(default_factory=datetime.utcnow)
     collected_by: str = ""
-    hash_value: Optional[str] = None
+    hash_value: str | None = None
 
 
 @dataclass
@@ -87,40 +96,37 @@ class AuditFinding:
     title: str
     description: str
     remediation: str
-    evidence: List[str] = field(default_factory=list)  # Evidence IDs
+    evidence: list[str] = field(default_factory=list)  # Evidence IDs
     status: str = "open"  # open, in_progress, resolved, false_positive
     identified_at: datetime = field(default_factory=datetime.utcnow)
     identified_by: str = ""
-    due_date: Optional[datetime] = None
-    assigned_to: Optional[str] = None
+    due_date: datetime | None = None
+    assigned_to: str | None = None
 
 
 class ComplianceChecker(ABC):
     """Abstract base class for compliance checkers."""
-    
+
     @abstractmethod
     def get_framework(self) -> ComplianceFramework:
         """Get the compliance framework this checker implements."""
-        pass
-    
+
     @abstractmethod
-    def get_controls(self) -> List[ComplianceControl]:
+    def get_controls(self) -> list[ComplianceControl]:
         """Get all controls for this framework."""
-        pass
-    
+
     @abstractmethod
-    async def assess_control(self, control: ComplianceControl) -> List[AuditFinding]:
+    async def assess_control(self, control: ComplianceControl) -> list[AuditFinding]:
         """Assess a specific control and return findings."""
-        pass
 
 
 class GDPRChecker(ComplianceChecker):
     """GDPR compliance checker."""
-    
+
     def get_framework(self) -> ComplianceFramework:
         return ComplianceFramework.GDPR
-    
-    def get_controls(self) -> List[ComplianceControl]:
+
+    def get_controls(self) -> list[ComplianceControl]:
         """Get GDPR controls based on key articles."""
         return [
             ComplianceControl(
@@ -196,11 +202,11 @@ class GDPRChecker(ComplianceChecker):
                 evidence_required=["security_measures", "encryption_implementation", "access_controls"]
             )
         ]
-    
-    async def assess_control(self, control: ComplianceControl) -> List[AuditFinding]:
+
+    async def assess_control(self, control: ComplianceControl) -> list[AuditFinding]:
         """Assess GDPR control compliance."""
         findings = []
-        
+
         if control.control_id == "GDPR-5":
             findings.extend(await self._check_data_processing_principles())
         elif control.control_id == "GDPR-6":
@@ -215,13 +221,13 @@ class GDPRChecker(ComplianceChecker):
             findings.extend(await self._check_processing_records())
         elif control.control_id == "GDPR-32":
             findings.extend(await self._check_security_measures())
-        
+
         return findings
-    
-    async def _check_data_processing_principles(self) -> List[AuditFinding]:
+
+    async def _check_data_processing_principles(self) -> list[AuditFinding]:
         """Check compliance with data processing principles."""
         findings = []
-        
+
         # Check if data minimization is implemented
         # This would check actual data collection practices
         findings.append(AuditFinding(
@@ -233,16 +239,16 @@ class GDPRChecker(ComplianceChecker):
             description="Manual assessment required to verify data minimization practices",
             remediation="Review data collection practices to ensure only necessary data is collected"
         ))
-        
+
         return findings
-    
-    async def _check_lawful_basis(self) -> List[AuditFinding]:
+
+    async def _check_lawful_basis(self) -> list[AuditFinding]:
         """Check lawful basis for processing."""
         findings = []
-        
+
         # Check if consent records exist
-        consent_records_exist = len(data_protection.consent_manager.consent_records) > 0
-        
+        consent_records_exist = len(data_protection.consent_manager.consent_records) > EMPTY_RECORDS_COUNT
+
         if not consent_records_exist:
             findings.append(AuditFinding(
                 finding_id=f"GDPR-6-{uuid.uuid4().hex[:8]}",
@@ -263,16 +269,15 @@ class GDPRChecker(ComplianceChecker):
                 description="Consent management system is in place",
                 remediation="Continue monitoring consent records for compliance"
             ))
-        
+
         return findings
-    
-    async def _check_consent_management(self) -> List[AuditFinding]:
+
+    async def _check_consent_management(self) -> list[AuditFinding]:
         """Check consent management implementation."""
         findings = []
-        
+
         # Check if consent withdrawal is supported
-        consent_manager = data_protection.consent_manager
-        
+
         findings.append(AuditFinding(
             finding_id=f"GDPR-7-{uuid.uuid4().hex[:8]}",
             control_id="GDPR-7",
@@ -282,16 +287,16 @@ class GDPRChecker(ComplianceChecker):
             description="System supports consent withdrawal functionality",
             remediation="Ensure consent withdrawal is clearly communicated to users"
         ))
-        
+
         return findings
-    
-    async def _check_erasure_capabilities(self) -> List[AuditFinding]:
+
+    async def _check_erasure_capabilities(self) -> list[AuditFinding]:
         """Check right to erasure implementation."""
         findings = []
-        
+
         # Check if data retention policies exist
         retention_policies = data_protection.retention_manager.policies
-        
+
         if not retention_policies:
             findings.append(AuditFinding(
                 finding_id=f"GDPR-17-{uuid.uuid4().hex[:8]}",
@@ -312,16 +317,15 @@ class GDPRChecker(ComplianceChecker):
                 description=f"Found {len(retention_policies)} retention policies",
                 remediation="Review retention periods to ensure compliance with legal requirements"
             ))
-        
+
         return findings
-    
-    async def _check_privacy_by_design(self) -> List[AuditFinding]:
+
+    async def _check_privacy_by_design(self) -> list[AuditFinding]:
         """Check privacy by design implementation."""
         findings = []
-        
+
         # Check if PII detection is enabled
-        pii_detector = data_protection.pii_detector
-        
+
         findings.append(AuditFinding(
             finding_id=f"GDPR-25-{uuid.uuid4().hex[:8]}",
             control_id="GDPR-25",
@@ -331,13 +335,13 @@ class GDPRChecker(ComplianceChecker):
             description="Automated PII detection is implemented",
             remediation="Regularly update PII detection patterns and ensure comprehensive coverage"
         ))
-        
+
         return findings
-    
-    async def _check_processing_records(self) -> List[AuditFinding]:
+
+    async def _check_processing_records(self) -> list[AuditFinding]:
         """Check processing records maintenance."""
         findings = []
-        
+
         # This would check if Article 30 records are maintained
         findings.append(AuditFinding(
             finding_id=f"GDPR-30-{uuid.uuid4().hex[:8]}",
@@ -348,13 +352,13 @@ class GDPRChecker(ComplianceChecker):
             description="Manual review required to verify processing records completeness",
             remediation="Ensure all processing activities are documented according to Article 30"
         ))
-        
+
         return findings
-    
-    async def _check_security_measures(self) -> List[AuditFinding]:
+
+    async def _check_security_measures(self) -> list[AuditFinding]:
         """Check security of processing measures."""
         findings = []
-        
+
         # Check encryption implementation
         findings.append(AuditFinding(
             finding_id=f"GDPR-32-{uuid.uuid4().hex[:8]}",
@@ -365,17 +369,17 @@ class GDPRChecker(ComplianceChecker):
             description="Data encryption is implemented for data at rest and in transit",
             remediation="Regularly review and update encryption standards"
         ))
-        
+
         return findings
 
 
 class SOC2Checker(ComplianceChecker):
     """SOC 2 compliance checker."""
-    
+
     def get_framework(self) -> ComplianceFramework:
         return ComplianceFramework.SOC2
-    
-    def get_controls(self) -> List[ComplianceControl]:
+
+    def get_controls(self) -> list[ComplianceControl]:
         """Get SOC 2 controls based on Trust Service Criteria."""
         return [
             ComplianceControl(
@@ -388,7 +392,7 @@ class SOC2Checker(ComplianceChecker):
                 evidence_required=["access_control_policies", "user_access_reviews", "authentication_logs"]
             ),
             ComplianceControl(
-                control_id="SOC2-CC6.7", 
+                control_id="SOC2-CC6.7",
                 framework=ComplianceFramework.SOC2,
                 title="Data Transmission Controls",
                 description="Data transmission is protected during transmission",
@@ -415,11 +419,11 @@ class SOC2Checker(ComplianceChecker):
                 evidence_required=["uptime_monitoring", "incident_response_procedures", "backup_procedures"]
             )
         ]
-    
-    async def assess_control(self, control: ComplianceControl) -> List[AuditFinding]:
+
+    async def assess_control(self, control: ComplianceControl) -> list[AuditFinding]:
         """Assess SOC 2 control compliance."""
         findings = []
-        
+
         if control.control_id == "SOC2-CC6.1":
             findings.extend(await self._check_access_controls())
         elif control.control_id == "SOC2-CC6.7":
@@ -428,13 +432,13 @@ class SOC2Checker(ComplianceChecker):
             findings.extend(await self._check_system_monitoring())
         elif control.control_id == "SOC2-A1.1":
             findings.extend(await self._check_availability_monitoring())
-        
+
         return findings
-    
-    async def _check_access_controls(self) -> List[AuditFinding]:
+
+    async def _check_access_controls(self) -> list[AuditFinding]:
         """Check access control implementation."""
         findings = []
-        
+
         # Check if authentication and authorization are implemented
         findings.append(AuditFinding(
             finding_id=f"SOC2-CC6.1-{uuid.uuid4().hex[:8]}",
@@ -445,13 +449,13 @@ class SOC2Checker(ComplianceChecker):
             description="Authentication and authorization controls are in place",
             remediation="Regularly review user access permissions and implement least privilege principle"
         ))
-        
+
         return findings
-    
-    async def _check_data_transmission(self) -> List[AuditFinding]:
+
+    async def _check_data_transmission(self) -> list[AuditFinding]:
         """Check data transmission security."""
         findings = []
-        
+
         # Check encryption in transit
         findings.append(AuditFinding(
             finding_id=f"SOC2-CC6.7-{uuid.uuid4().hex[:8]}",
@@ -462,13 +466,13 @@ class SOC2Checker(ComplianceChecker):
             description="TLS encryption is configured for data transmission",
             remediation="Regularly update TLS configuration and monitor for weak ciphers"
         ))
-        
+
         return findings
-    
-    async def _check_system_monitoring(self) -> List[AuditFinding]:
+
+    async def _check_system_monitoring(self) -> list[AuditFinding]:
         """Check system monitoring implementation."""
         findings = []
-        
+
         # Check if monitoring is configured
         findings.append(AuditFinding(
             finding_id=f"SOC2-CC7.1-{uuid.uuid4().hex[:8]}",
@@ -479,13 +483,13 @@ class SOC2Checker(ComplianceChecker):
             description="Security monitoring and alerting system is configured",
             remediation="Ensure monitoring covers all critical security events"
         ))
-        
+
         return findings
-    
-    async def _check_availability_monitoring(self) -> List[AuditFinding]:
+
+    async def _check_availability_monitoring(self) -> list[AuditFinding]:
         """Check availability monitoring."""
         findings = []
-        
+
         # Check if availability monitoring exists
         findings.append(AuditFinding(
             finding_id=f"SOC2-A1.1-{uuid.uuid4().hex[:8]}",
@@ -496,20 +500,20 @@ class SOC2Checker(ComplianceChecker):
             description="Manual assessment required to verify availability monitoring",
             remediation="Implement comprehensive availability monitoring and alerting"
         ))
-        
+
         return findings
 
 
 class EvidenceCollector:
     """Collects and manages audit evidence."""
-    
+
     def __init__(self):
-        self.evidence_store: Dict[str, AuditEvidence] = {}
-    
+        self.evidence_store: dict[str, AuditEvidence] = {}
+
     async def collect_system_configuration(self, control_id: str, description: str) -> str:
         """Collect system configuration as evidence."""
         evidence_id = f"SYS-{uuid.uuid4().hex[:8]}"
-        
+
         # Collect system configuration
         config_data = {
             "encryption_settings": {
@@ -528,7 +532,7 @@ class EvidenceCollector:
                 "alerting": True
             }
         }
-        
+
         evidence = AuditEvidence(
             evidence_id=evidence_id,
             control_id=control_id,
@@ -541,15 +545,15 @@ class EvidenceCollector:
             },
             hash_value=hashlib.sha256(json.dumps(config_data).encode()).hexdigest()
         )
-        
+
         self.evidence_store[evidence_id] = evidence
         return evidence_id
-    
-    async def collect_log_evidence(self, control_id: str, log_type: str, 
+
+    async def collect_log_evidence(self, control_id: str, log_type: str,
                                  start_time: datetime, end_time: datetime) -> str:
         """Collect log evidence for a specific time period."""
         evidence_id = f"LOG-{uuid.uuid4().hex[:8]}"
-        
+
         # This would collect actual logs from the system
         # For now, we'll create sample log evidence
         log_data = {
@@ -570,13 +574,13 @@ class EvidenceCollector:
                 {
                     "timestamp": "2024-01-15T10:35:00Z",
                     "event": "data_access",
-                    "user_id": "user123", 
+                    "user_id": "user123",
                     "resource": "/api/memories",
                     "method": "GET"
                 }
             ]
         }
-        
+
         evidence = AuditEvidence(
             evidence_id=evidence_id,
             control_id=control_id,
@@ -589,14 +593,14 @@ class EvidenceCollector:
             },
             hash_value=hashlib.sha256(json.dumps(log_data).encode()).hexdigest()
         )
-        
+
         self.evidence_store[evidence_id] = evidence
         return evidence_id
-    
+
     async def collect_policy_evidence(self, control_id: str, policy_name: str) -> str:
         """Collect policy documentation as evidence."""
         evidence_id = f"POL-{uuid.uuid4().hex[:8]}"
-        
+
         # This would collect actual policy documents
         policy_data = {
             "policy_name": policy_name,
@@ -607,7 +611,7 @@ class EvidenceCollector:
             "approved_by": "Security Officer",
             "summary": f"This policy defines requirements for {policy_name}"
         }
-        
+
         evidence = AuditEvidence(
             evidence_id=evidence_id,
             control_id=control_id,
@@ -620,15 +624,15 @@ class EvidenceCollector:
             },
             hash_value=hashlib.sha256(json.dumps(policy_data).encode()).hexdigest()
         )
-        
+
         self.evidence_store[evidence_id] = evidence
         return evidence_id
-    
-    def get_evidence(self, evidence_id: str) -> Optional[AuditEvidence]:
+
+    def get_evidence(self, evidence_id: str) -> AuditEvidence | None:
         """Get evidence by ID."""
         return self.evidence_store.get(evidence_id)
-    
-    def get_evidence_for_control(self, control_id: str) -> List[AuditEvidence]:
+
+    def get_evidence_for_control(self, control_id: str) -> list[AuditEvidence]:
         """Get all evidence for a specific control."""
         return [
             evidence for evidence in self.evidence_store.values()
@@ -638,43 +642,43 @@ class EvidenceCollector:
 
 class ComplianceAssessment:
     """Manages compliance assessments and audits."""
-    
+
     def __init__(self):
-        self.checkers: Dict[ComplianceFramework, ComplianceChecker] = {
+        self.checkers: dict[ComplianceFramework, ComplianceChecker] = {
             ComplianceFramework.GDPR: GDPRChecker(),
             ComplianceFramework.SOC2: SOC2Checker()
         }
         self.evidence_collector = EvidenceCollector()
-        self.assessment_history: List[Dict[str, Any]] = []
-    
-    async def run_assessment(self, framework: ComplianceFramework, 
-                           controls: Optional[List[str]] = None) -> Dict[str, Any]:
+        self.assessment_history: list[dict[str, Any]] = []
+
+    async def run_assessment(self, framework: ComplianceFramework,
+                           controls: list[str] | None = None) -> dict[str, Any]:
         """Run compliance assessment for a framework."""
         if framework not in self.checkers:
             raise ValueError(f"No checker available for framework: {framework}")
-        
+
         checker = self.checkers[framework]
         all_controls = checker.get_controls()
-        
+
         # Filter controls if specified
         if controls:
             all_controls = [c for c in all_controls if c.control_id in controls]
-        
+
         assessment_id = f"ASSESS-{uuid.uuid4().hex[:8]}"
         assessment_start = datetime.utcnow()
-        
+
         all_findings = []
         control_results = {}
-        
+
         for control in all_controls:
             try:
                 # Collect evidence for control
                 await self._collect_control_evidence(control)
-                
+
                 # Assess control
                 findings = await checker.assess_control(control)
                 all_findings.extend(findings)
-                
+
                 # Determine control status
                 if not findings:
                     status = ComplianceStatus.COMPLIANT
@@ -684,30 +688,30 @@ class ComplianceAssessment:
                     status = ComplianceStatus.PARTIALLY_COMPLIANT
                 else:
                     status = ComplianceStatus.COMPLIANT
-                
+
                 control_results[control.control_id] = {
                     "status": status.value,
                     "findings_count": len(findings),
                     "critical_findings": len([f for f in findings if f.severity == "critical"]),
                     "high_findings": len([f for f in findings if f.severity == "high"])
                 }
-                
+
                 # Update control status
                 control.status = status
                 control.last_assessed = datetime.utcnow()
-                
+
             except Exception as e:
                 control_results[control.control_id] = {
                     "status": "error",
                     "error": str(e)
                 }
-        
+
         # Calculate overall compliance score
-        compliant_controls = sum(1 for r in control_results.values() 
+        compliant_controls = sum(1 for r in control_results.values()
                                if r.get("status") == "compliant")
         total_controls = len(control_results)
-        compliance_score = (compliant_controls / total_controls * 100) if total_controls > 0 else 0
-        
+        compliance_score = (compliant_controls / total_controls * COMPLIANCE_PERCENTAGE_MULTIPLIER) if total_controls > MIN_TOTAL_CONTROLS else MIN_TOTAL_CONTROLS
+
         assessment_result = {
             "assessment_id": assessment_id,
             "framework": framework.value,
@@ -716,9 +720,9 @@ class ComplianceAssessment:
             "compliance_score": compliance_score,
             "total_controls": total_controls,
             "compliant_controls": compliant_controls,
-            "non_compliant_controls": sum(1 for r in control_results.values() 
+            "non_compliant_controls": sum(1 for r in control_results.values()
                                         if r.get("status") == "non_compliant"),
-            "partially_compliant_controls": sum(1 for r in control_results.values() 
+            "partially_compliant_controls": sum(1 for r in control_results.values()
                                               if r.get("status") == "partially_compliant"),
             "total_findings": len(all_findings),
             "critical_findings": len([f for f in all_findings if f.severity == "critical"]),
@@ -737,9 +741,9 @@ class ComplianceAssessment:
                 for f in all_findings
             ]
         }
-        
+
         self.assessment_history.append(assessment_result)
-        
+
         # Log assessment completion
         await audit_logger.log_security_event(
             event_type="compliance_assessment_completed",
@@ -751,9 +755,9 @@ class ComplianceAssessment:
             },
             severity="info"
         )
-        
+
         return assessment_result
-    
+
     async def _collect_control_evidence(self, control: ComplianceControl) -> None:
         """Collect evidence for a control."""
         # Collect different types of evidence based on requirements
@@ -772,20 +776,20 @@ class ComplianceAssessment:
                 await self.evidence_collector.collect_policy_evidence(
                     control.control_id, evidence_type
                 )
-    
-    def generate_compliance_report(self, framework: ComplianceFramework) -> Dict[str, Any]:
+
+    def generate_compliance_report(self, framework: ComplianceFramework) -> dict[str, Any]:
         """Generate compliance report for a framework."""
         # Get latest assessment for framework
         framework_assessments = [
             a for a in self.assessment_history
             if a["framework"] == framework.value
         ]
-        
+
         if not framework_assessments:
             return {"error": "No assessments found for framework"}
-        
+
         latest_assessment = max(framework_assessments, key=lambda a: a["start_time"])
-        
+
         # Generate executive summary
         executive_summary = {
             "overall_compliance_score": latest_assessment["compliance_score"],
@@ -795,12 +799,12 @@ class ComplianceAssessment:
             "high_findings": latest_assessment["high_findings"],
             "compliance_status": self._determine_overall_status(latest_assessment["compliance_score"])
         }
-        
+
         # Key findings and recommendations
         findings = latest_assessment["findings"]
         critical_findings = [f for f in findings if f["severity"] == "critical"]
         high_findings = [f for f in findings if f["severity"] == "high"]
-        
+
         recommendations = []
         for finding in critical_findings + high_findings:
             recommendations.append({
@@ -808,7 +812,7 @@ class ComplianceAssessment:
                 "control": finding["control_id"],
                 "recommendation": finding["remediation"]
             })
-        
+
         return {
             "framework": framework.value,
             "report_generated": datetime.utcnow().isoformat(),
@@ -817,32 +821,32 @@ class ComplianceAssessment:
             "recommendations": recommendations,
             "assessment_details": latest_assessment
         }
-    
+
     def _determine_overall_status(self, compliance_score: float) -> str:
         """Determine overall compliance status based on score."""
-        if compliance_score >= 95:
+        if compliance_score >= FULLY_COMPLIANT_THRESHOLD:
             return "Fully Compliant"
-        elif compliance_score >= 80:
+        elif compliance_score >= SUBSTANTIALLY_COMPLIANT_THRESHOLD:
             return "Substantially Compliant"
-        elif compliance_score >= 60:
+        elif compliance_score >= PARTIALLY_COMPLIANT_THRESHOLD:
             return "Partially Compliant"
         else:
             return "Non-Compliant"
-    
-    def get_compliance_dashboard(self) -> Dict[str, Any]:
+
+    def get_compliance_dashboard(self) -> dict[str, Any]:
         """Get compliance dashboard data."""
         dashboard_data = {
             "timestamp": datetime.utcnow().isoformat(),
             "frameworks": {}
         }
-        
+
         for framework in ComplianceFramework:
             if framework in self.checkers:
                 framework_assessments = [
                     a for a in self.assessment_history
                     if a["framework"] == framework.value
                 ]
-                
+
                 if framework_assessments:
                     latest = max(framework_assessments, key=lambda a: a["start_time"])
                     dashboard_data["frameworks"][framework.value] = {
@@ -858,7 +862,7 @@ class ComplianceAssessment:
                         "critical_findings": 0,
                         "status": "Not Assessed"
                     }
-        
+
         return dashboard_data
 
 

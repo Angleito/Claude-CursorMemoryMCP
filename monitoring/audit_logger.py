@@ -16,24 +16,33 @@ Examples:
 
 import asyncio
 import json
+import os
 import uuid
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
+from contextlib import suppress
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import asyncpg
 import structlog
-from prometheus_client import (
-    Counter,
-    Gauge,
-    Histogram,
-    start_http_server,
-    CollectorRegistry,
-    REGISTRY,
-)
+from prometheus_client import REGISTRY
+from prometheus_client import CollectorRegistry
+from prometheus_client import Counter
+from prometheus_client import Gauge
+from prometheus_client import Histogram
+from prometheus_client import start_http_server
 
 from config.settings import get_settings
+
+# Audit logging constants
+HTTP_CLIENT_ERROR_THRESHOLD = 400
+MAX_STRING_LENGTH = 1000
+MAX_OBJECT_LENGTH = 2000
+EMERGENCY_DRAIN_LIMIT = 100
+USER_ROLE_CACHE_TTL = 300  # 5 minutes
+MAX_USER_ROLE_CACHE_SIZE = 1000
+DATABASE_TIMEOUT = 1.0
 
 settings = get_settings()
 
@@ -86,7 +95,7 @@ class AuditEventType(str, Enum):
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
     USER_REGISTRATION = "user_registration"
-    PASSWORD_CHANGE = "password_change"
+    PASSWORD_CHANGE = os.getenv("PASSWORD_CHANGE_EVENT", "password_change")
     API_KEY_CREATED = "api_key_created"
     API_KEY_REVOKED = "api_key_revoked"
     MEMORY_CREATED = "memory_created"
@@ -125,17 +134,17 @@ class SecuritySeverity(str, Enum):
 class AuditLogger:
     """Main audit logging class."""
 
-    def __init__(self, max_queue_size: int = 10000, metrics_registry: Optional[CollectorRegistry] = None) -> None:
+    def __init__(self, max_queue_size: int = 10000, metrics_registry: CollectorRegistry | None = None) -> None:
         """Initialize the audit logger.
-        
+
         Args:
             max_queue_size: Maximum size of the event queue to prevent memory overflow
             metrics_registry: Optional Prometheus registry for metrics
         """
         self.settings = settings
-        self.db_pool: Optional[asyncpg.Pool] = None
-        self.event_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=max_queue_size)
-        self.background_task: Optional[asyncio.Task[None]] = None
+        self.db_pool: asyncpg.Pool | None = None
+        self.event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=max_queue_size)
+        self.background_task: asyncio.Task[None] | None = None
         self._shutdown_event = asyncio.Event()
         self._metrics_registry = metrics_registry or REGISTRY
 
@@ -143,32 +152,32 @@ class AuditLogger:
         self.failed_login_threshold = int(getattr(settings.security, 'failed_login_threshold', 5))
         self.suspicious_activity_threshold = int(getattr(settings.security, 'suspicious_activity_threshold', 10))
         self.rate_limit_threshold = int(getattr(settings.security, 'rate_limit_threshold', 100))
-        
+
         # Performance tracking
-        self._event_processing_times: List[float] = []
+        self._event_processing_times: list[float] = []
         self._max_processing_time_samples = 1000
 
     async def initialize(self) -> None:
         """Initialize audit logger with proper error handling and logging.
-        
+
         Raises:
             ConnectionError: If database connection fails
             RuntimeError: If initialization fails
         """
         try:
-            logger.info("Initializing audit logger", 
+            logger.info("Initializing audit logger",
                        failed_login_threshold=self.failed_login_threshold,
                        queue_size=self.event_queue.maxsize)
-            
+
             # Create database connection pool with retry logic
             retry_count = 0
             max_retries = 3
-            
+
             while retry_count < max_retries:
                 try:
                     self.db_pool = await asyncpg.create_pool(
-                        self.settings.database.database_url, 
-                        min_size=2, 
+                        self.settings.database.database_url,
+                        min_size=2,
                         max_size=10,
                         command_timeout=30,
                         server_settings={
@@ -181,20 +190,20 @@ class AuditLogger:
                 except Exception as e:
                     retry_count += 1
                     if retry_count >= max_retries:
-                        logger.error("Failed to create database pool after retries", 
+                        logger.error("Failed to create database pool after retries",
                                    error=str(e), retry_count=retry_count)
                         raise ConnectionError(f"Database connection failed: {e}") from e
-                    
-                    logger.warning("Database connection attempt failed, retrying", 
+
+                    logger.warning("Database connection attempt failed, retrying",
                                  error=str(e), retry=retry_count, max_retries=max_retries)
                     await asyncio.sleep(2 ** retry_count)  # Exponential backoff
 
             # Initialize database tables
             await self._ensure_audit_tables()
-            
+
             # Start background processing task
             self.background_task = asyncio.create_task(
-                self._process_events(), 
+                self._process_events(),
                 name="audit_logger_background_processor"
             )
             logger.info("Background event processing task started")
@@ -203,13 +212,13 @@ class AuditLogger:
             if hasattr(self.settings, 'monitoring') and getattr(self.settings.monitoring, 'prometheus_port', None):
                 try:
                     start_http_server(self.settings.monitoring.prometheus_port, registry=self._metrics_registry)
-                    logger.info("Prometheus metrics server started", 
+                    logger.info("Prometheus metrics server started",
                                port=self.settings.monitoring.prometheus_port)
                 except Exception as e:
                     logger.warning("Failed to start Prometheus metrics server", error=str(e))
-            
+
             logger.info("Audit logger initialized successfully")
-            
+
         except Exception as e:
             logger.error("Failed to initialize audit logger", error=str(e))
             await self.close()
@@ -218,10 +227,10 @@ class AuditLogger:
     async def close(self) -> None:
         """Close audit logger gracefully with proper cleanup."""
         logger.info("Shutting down audit logger")
-        
+
         # Signal shutdown to background task
         self._shutdown_event.set()
-        
+
         # Cancel and wait for background task
         if self.background_task and not self.background_task.done():
             self.background_task.cancel()
@@ -229,14 +238,14 @@ class AuditLogger:
                 try:
                     await asyncio.wait_for(self.background_task, timeout=10.0)
                     logger.info("Background task shut down gracefully")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.warning("Background task shutdown timed out")
-        
+
         # Process remaining events in queue with timeout
         remaining_events = 0
         start_time = asyncio.get_event_loop().time()
         timeout = 30.0  # 30 seconds to process remaining events
-        
+
         while not self.event_queue.empty() and (asyncio.get_event_loop().time() - start_time) < timeout:
             try:
                 event = self.event_queue.get_nowait()
@@ -246,10 +255,10 @@ class AuditLogger:
                 break
             except Exception as e:
                 logger.error("Error processing remaining event during shutdown", error=str(e))
-        
+
         if remaining_events > 0:
             logger.info("Processed remaining events during shutdown", count=remaining_events)
-        
+
         # Close database pool
         if self.db_pool:
             try:
@@ -257,22 +266,22 @@ class AuditLogger:
                 logger.info("Database connection pool closed")
             except Exception as e:
                 logger.error("Error closing database pool", error=str(e))
-        
+
         logger.info("Audit logger shutdown complete")
 
     async def _ensure_audit_tables(self) -> None:
         """Ensure audit tables exist with proper error handling.
-        
+
         Raises:
             DatabaseError: If table creation fails
         """
         if not self.db_pool:
             raise RuntimeError("Database pool not initialized")
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 logger.debug("Creating audit tables if they don't exist")
-                
+
                 # Audit logs table with improved schema
                 await conn.execute(
                     """
@@ -306,7 +315,7 @@ class AuditLogger:
                     "CREATE INDEX IF NOT EXISTS idx_audit_ip_address ON audit_logs (ip_address) WHERE ip_address IS NOT NULL",
                     "CREATE INDEX IF NOT EXISTS idx_audit_success ON audit_logs (success, timestamp DESC)"
                 ]
-                
+
                 for query in index_queries:
                     try:
                         await conn.execute(query)
@@ -349,7 +358,7 @@ class AuditLogger:
                     "CREATE INDEX IF NOT EXISTS idx_security_risk_score ON security_events (risk_score DESC) WHERE risk_score > 0",
                     "CREATE INDEX IF NOT EXISTS idx_security_unresolved ON security_events (timestamp DESC) WHERE resolved = FALSE"
                 ]
-                
+
                 for query in security_index_queries:
                     try:
                         await conn.execute(query)
@@ -396,15 +405,15 @@ class AuditLogger:
                     "CREATE INDEX IF NOT EXISTS idx_api_slow ON api_call_logs (duration_ms DESC, timestamp DESC) WHERE duration_ms > 1000",
                     "CREATE INDEX IF NOT EXISTS idx_api_session ON api_call_logs (session_id) WHERE session_id IS NOT NULL"
                 ]
-                
+
                 for query in api_index_queries:
                     try:
                         await conn.execute(query)
                     except Exception as e:
                         logger.warning("Failed to create API index", query=query, error=str(e))
-                
+
                 logger.info("Audit tables and indexes created successfully")
-                
+
         except Exception as e:
             logger.error("Failed to ensure audit tables", error=str(e))
             raise RuntimeError(f"Database table creation failed: {e}") from e
@@ -414,18 +423,18 @@ class AuditLogger:
         self,
         action: str,
         resource: str,
-        user_id: Optional[uuid.UUID] = None,
-        api_key_id: Optional[uuid.UUID] = None,
-        resource_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-        session_id: Optional[str] = None,
+        user_id: uuid.UUID | None = None,
+        api_key_id: uuid.UUID | None = None,
+        resource_id: str | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        details: dict[str, Any] | None = None,
+        session_id: str | None = None,
         success: bool = True,
-        duration_ms: Optional[int] = None,
+        duration_ms: int | None = None,
     ) -> None:
         """Log an audit event with comprehensive context.
-        
+
         Args:
             action: The action being performed (e.g., 'user_login', 'memory_created')
             resource: The resource being acted upon (e.g., 'authentication', 'memory')
@@ -438,7 +447,7 @@ class AuditLogger:
             session_id: Optional session identifier
             success: Whether the action was successful (default: True)
             duration_ms: Optional duration of the action in milliseconds
-            
+
         Raises:
             ValueError: If required parameters are invalid
             QueueFullError: If the event queue is full
@@ -448,14 +457,14 @@ class AuditLogger:
             raise ValueError("Action cannot be empty")
         if not resource or not resource.strip():
             raise ValueError("Resource cannot be empty")
-        
+
         # Sanitize inputs
         action = action.strip()[:100]  # Limit length
         resource = resource.strip()[:100]
-        
+
         event_id = str(uuid.uuid4())
         timestamp = datetime.utcnow()
-        
+
         event = {
             "type": "audit",
             "id": event_id,
@@ -477,7 +486,7 @@ class AuditLogger:
         try:
             self.event_queue.put_nowait(event)
         except asyncio.QueueFull:
-            logger.error("Audit event queue is full, dropping event", 
+            logger.error("Audit event queue is full, dropping event",
                         action=action, resource=resource, event_id=event_id)
             # Try to process some events immediately to make space
             await self._emergency_queue_drain()
@@ -491,7 +500,7 @@ class AuditLogger:
                 action=action, resource=resource, user_role=user_role
             ).inc()
         except Exception as e:
-            logger.warning("Failed to update audit metrics", 
+            logger.warning("Failed to update audit metrics",
                          error=str(e), action=action, resource=resource)
             # Use fallback metrics without user role lookup
             try:
@@ -499,7 +508,7 @@ class AuditLogger:
                     action=action, resource=resource, user_role="unknown"
                 ).inc()
             except Exception as metrics_error:
-                logger.error("Critical: Failed to update any audit metrics", 
+                logger.error("Critical: Failed to update any audit metrics",
                            error=str(metrics_error), original_error=str(e))
 
         # Structured logging with enhanced context
@@ -514,24 +523,24 @@ class AuditLogger:
             "success": success,
             "ip_address": ip_address,
         }
-        
+
         # Add duration if provided
         if duration_ms is not None:
             log_context["duration_ms"] = duration_ms
-        
+
         # Add sanitized details (avoid logging sensitive data)
         if details:
             log_context["details_keys"] = list(details.keys())
             log_context["details_count"] = len(details)
-        
+
         logger.info("Audit event logged", **log_context)
 
     async def log_security_event(
         self,
         event_type: str,
-        user_id: Optional[uuid.UUID] = None,
-        ip_address: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        user_id: uuid.UUID | None = None,
+        ip_address: str | None = None,
+        details: dict[str, Any] | None = None,
         severity: str = SecuritySeverity.MEDIUM,
     ):
         """Log a security event."""
@@ -572,10 +581,10 @@ class AuditLogger:
         method: str,
         path: str,
         status_code: int,
-        user_id: Optional[uuid.UUID] = None,
-        api_key_id: Optional[uuid.UUID] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
+        user_id: uuid.UUID | None = None,
+        api_key_id: uuid.UUID | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
         duration: float = 0.0,
         request_size: int = 0,
         response_size: int = 0,
@@ -608,7 +617,7 @@ class AuditLogger:
         API_REQUEST_DURATION.labels(method=method, endpoint=endpoint).observe(duration)
 
         # Log failed requests
-        if status_code >= 400:
+        if status_code >= HTTP_CLIENT_ERROR_THRESHOLD:
             logger.warning(
                 "api_error",
                 method=method,
@@ -619,7 +628,7 @@ class AuditLogger:
             )
 
     async def log_failed_login(
-        self, email: str, ip_address: str, reason: str, user_agent: Optional[str] = None
+        self, email: str, ip_address: str, reason: str, user_agent: str | None = None
     ):
         """Log failed login attempt."""
         details = {"email": email, "reason": reason, "user_agent": user_agent}
@@ -641,9 +650,9 @@ class AuditLogger:
         self,
         operation: str,
         table: str,
-        user_id: Optional[uuid.UUID] = None,
+        user_id: uuid.UUID | None = None,
         affected_rows: int = 0,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ):
         """Log database operation."""
         await self.log_event(
@@ -657,42 +666,42 @@ class AuditLogger:
         DATABASE_OPERATIONS_TOTAL.labels(operation=operation, table=table).inc()
 
     # Helper methods
-    def _sanitize_details(self, details: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_details(self, details: dict[str, Any]) -> dict[str, Any]:
         """Sanitize details to prevent logging sensitive data.
-        
+
         Args:
             details: Original details dictionary
-            
+
         Returns:
             Sanitized details dictionary
         """
         if not details:
             return {}
-        
+
         # List of sensitive keys to exclude or mask
         sensitive_keys = {
             'password', 'passwd', 'secret', 'token', 'key', 'api_key',
             'authorization', 'auth', 'credential', 'private', 'confidential'
         }
-        
+
         sanitized = {}
         for key, value in details.items():
             if any(sensitive in key.lower() for sensitive in sensitive_keys):
                 sanitized[key] = "[REDACTED]"
-            elif isinstance(value, str) and len(value) > 1000:
-                sanitized[key] = value[:1000] + "...[TRUNCATED]"
-            elif isinstance(value, (dict, list)) and len(str(value)) > 2000:
+            elif isinstance(value, str) and len(value) > MAX_STRING_LENGTH:
+                sanitized[key] = value[:MAX_STRING_LENGTH] + "...[TRUNCATED]"
+            elif isinstance(value, dict | list) and len(str(value)) > MAX_OBJECT_LENGTH:
                 sanitized[key] = "[LARGE_OBJECT_REDACTED]"
             else:
                 sanitized[key] = value
-        
+
         return sanitized
-    
+
     async def _emergency_queue_drain(self) -> None:
         """Emergency queue draining when queue is full."""
         drained_count = 0
-        max_drain = 100  # Drain up to 100 events
-        
+        max_drain = EMERGENCY_DRAIN_LIMIT  # Drain up to configured events
+
         while not self.event_queue.empty() and drained_count < max_drain:
             try:
                 event = self.event_queue.get_nowait()
@@ -703,16 +712,16 @@ class AuditLogger:
             except Exception as e:
                 logger.error("Error during emergency queue drain", error=str(e))
                 break
-        
+
         if drained_count > 0:
             logger.warning("Emergency queue drain completed", drained_count=drained_count)
-    
+
     async def _get_user_role_cached(self, user_id: uuid.UUID) -> str:
         """Get user role with caching to avoid blocking operations.
-        
+
         Args:
             user_id: User ID to look up
-            
+
         Returns:
             User role string or 'unknown' if lookup fails
         """
@@ -720,90 +729,90 @@ class AuditLogger:
         if not hasattr(self, '_user_role_cache'):
             self._user_role_cache = {}
             self._user_role_cache_ttl = {}
-        
+
         now = datetime.utcnow().timestamp()
         cache_key = str(user_id)
-        
+
         # Check cache first
-        if (cache_key in self._user_role_cache and 
+        if (cache_key in self._user_role_cache and
             cache_key in self._user_role_cache_ttl and
-            now - self._user_role_cache_ttl[cache_key] < 300):  # 5 minute TTL
+            now - self._user_role_cache_ttl[cache_key] < USER_ROLE_CACHE_TTL):  # 5 minute TTL
             return self._user_role_cache[cache_key]
-        
+
         # Fallback to database lookup with timeout
         try:
-            role = await asyncio.wait_for(self._get_user_role(user_id), timeout=1.0)
+            role = await asyncio.wait_for(self._get_user_role(user_id), timeout=DATABASE_TIMEOUT)
             self._user_role_cache[cache_key] = role
             self._user_role_cache_ttl[cache_key] = now
             return role
-        except (asyncio.TimeoutError, Exception):
+        except (TimeoutError, Exception):
             # Clean up cache periodically
-            if len(self._user_role_cache) > 1000:
+            if len(self._user_role_cache) > MAX_USER_ROLE_CACHE_SIZE:
                 self._user_role_cache.clear()
                 self._user_role_cache_ttl.clear()
             return "unknown"
-    
+
     # Background processing
     async def _process_events(self) -> None:
         """Background task to process audit events with improved error handling."""
         logger.info("Starting audit event processing loop")
         batch_size = 10
         batch_timeout = 5.0
-        
+
         while not self._shutdown_event.is_set():
             try:
                 # Process events in batches for better performance
                 events_batch = []
                 batch_start_time = asyncio.get_event_loop().time()
-                
+
                 # Collect a batch of events
-                while (len(events_batch) < batch_size and 
+                while (len(events_batch) < batch_size and
                        (asyncio.get_event_loop().time() - batch_start_time) < batch_timeout):
                     try:
                         remaining_timeout = batch_timeout - (asyncio.get_event_loop().time() - batch_start_time)
                         if remaining_timeout <= 0:
                             break
-                        
+
                         event = await asyncio.wait_for(
-                            self.event_queue.get(), 
+                            self.event_queue.get(),
                             timeout=min(remaining_timeout, 1.0)
                         )
                         events_batch.append(event)
-                        
-                    except asyncio.TimeoutError:
+
+                    except TimeoutError:
                         break  # Process whatever we have
-                
+
                 # Process the batch
                 if events_batch:
                     await self._process_events_batch(events_batch)
-                
+
                 # Brief pause if no events to process
                 if not events_batch:
                     await asyncio.sleep(0.1)
-                    
+
             except asyncio.CancelledError:
                 logger.info("Audit event processing cancelled")
                 break
             except Exception as e:
                 logger.error("Error in audit event processing loop", error=str(e))
                 await asyncio.sleep(1)  # Pause before retrying
-        
+
         logger.info("Audit event processing loop ended")
-    
-    async def _process_events_batch(self, events: List[Dict[str, Any]]) -> None:
+
+    async def _process_events_batch(self, events: list[dict[str, Any]]) -> None:
         """Process a batch of events efficiently.
-        
+
         Args:
             events: List of events to process
         """
         start_time = asyncio.get_event_loop().time()
-        
+
         try:
             # Group events by type for batch processing
             audit_events = [e for e in events if e.get("type") == "audit"]
             security_events = [e for e in events if e.get("type") == "security"]
             api_events = [e for e in events if e.get("type") == "api_call"]
-            
+
             # Process each type in parallel
             tasks = []
             if audit_events:
@@ -812,35 +821,35 @@ class AuditLogger:
                 tasks.append(self._store_security_events_batch(security_events))
             if api_events:
                 tasks.append(self._store_api_events_batch(api_events))
-            
+
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             # Track processing performance
             processing_time = (asyncio.get_event_loop().time() - start_time) * 1000
             self._event_processing_times.append(processing_time)
-            
+
             # Keep only recent samples
             if len(self._event_processing_times) > self._max_processing_time_samples:
                 self._event_processing_times = self._event_processing_times[-self._max_processing_time_samples//2:]
-            
-            logger.debug("Processed events batch", 
-                        batch_size=len(events), 
+
+            logger.debug("Processed events batch",
+                        batch_size=len(events),
                         processing_time_ms=processing_time)
-                        
+
         except Exception as e:
-            logger.error("Error processing events batch", 
+            logger.error("Error processing events batch",
                         error=str(e), batch_size=len(events))
-    
-    async def _process_single_event(self, event: Dict[str, Any]) -> None:
+
+    async def _process_single_event(self, event: dict[str, Any]) -> None:
         """Process a single event (fallback method).
-        
+
         Args:
             event: Event dictionary to process
         """
         try:
             event_type = event.get("type")
-            
+
             if event_type == "audit":
                 await self._store_audit_event(event)
             elif event_type == "security":
@@ -849,20 +858,20 @@ class AuditLogger:
                 await self._store_api_call(event)
             else:
                 logger.warning("Unknown event type", event_type=event_type, event_id=event.get("id"))
-                
+
         except Exception as e:
-            logger.error("Error processing single event", 
+            logger.error("Error processing single event",
                         error=str(e), event_id=event.get("id"), event_type=event.get("type"))
 
-    async def _store_audit_events_batch(self, events: List[Dict[str, Any]]) -> None:
+    async def _store_audit_events_batch(self, events: list[dict[str, Any]]) -> None:
         """Store multiple audit events in a single transaction.
-        
+
         Args:
             events: List of audit events to store
         """
         if not events or not self.db_pool:
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 # Prepare batch insert
@@ -883,7 +892,7 @@ class AuditLogger:
                         event.get("success", True),
                         event.get("duration_ms"),
                     ))
-                
+
                 await conn.executemany(
                     """
                     INSERT INTO audit_logs (
@@ -893,30 +902,30 @@ class AuditLogger:
                     """,
                     values
                 )
-                
+
                 logger.debug("Stored audit events batch", count=len(events))
-                
+
         except Exception as e:
-            logger.error("Failed to store audit events batch", 
+            logger.error("Failed to store audit events batch",
                         error=str(e), batch_size=len(events))
             # Fall back to individual inserts
             for event in events:
                 try:
                     await self._store_audit_event(event)
                 except Exception as individual_error:
-                    logger.error("Failed to store individual audit event", 
+                    logger.error("Failed to store individual audit event",
                                error=str(individual_error), event_id=event.get("id"))
 
-    async def _store_audit_event(self, event: Dict[str, Any]) -> None:
+    async def _store_audit_event(self, event: dict[str, Any]) -> None:
         """Store single audit event in database.
-        
+
         Args:
             event: Audit event to store
         """
         if not self.db_pool:
             logger.error("Database pool not available")
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -941,18 +950,18 @@ class AuditLogger:
                     event.get("duration_ms"),
                 )
         except Exception as e:
-            logger.error("Failed to store audit event", 
+            logger.error("Failed to store audit event",
                         error=str(e), event_id=event.get("id"))
 
-    async def _store_security_events_batch(self, events: List[Dict[str, Any]]) -> None:
+    async def _store_security_events_batch(self, events: list[dict[str, Any]]) -> None:
         """Store multiple security events in a single transaction.
-        
+
         Args:
             events: List of security events to store
         """
         if not events or not self.db_pool:
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 values = []
@@ -974,7 +983,7 @@ class AuditLogger:
                         event.get("session_id"),
                         event.get("user_agent"),
                     ))
-                
+
                 await conn.executemany(
                     """
                     INSERT INTO security_events (
@@ -984,30 +993,30 @@ class AuditLogger:
                     """,
                     values
                 )
-                
+
                 logger.debug("Stored security events batch", count=len(events))
-                
+
         except Exception as e:
-            logger.error("Failed to store security events batch", 
+            logger.error("Failed to store security events batch",
                         error=str(e), batch_size=len(events))
             # Fall back to individual inserts
             for event in events:
                 try:
                     await self._store_security_event(event)
                 except Exception as individual_error:
-                    logger.error("Failed to store individual security event", 
+                    logger.error("Failed to store individual security event",
                                error=str(individual_error), event_id=event.get("id"))
 
-    async def _store_security_event(self, event: Dict[str, Any]) -> None:
+    async def _store_security_event(self, event: dict[str, Any]) -> None:
         """Store single security event in database.
-        
+
         Args:
             event: Security event to store
         """
         if not self.db_pool:
             logger.error("Database pool not available")
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -1034,18 +1043,18 @@ class AuditLogger:
                     event.get("user_agent"),
                 )
         except Exception as e:
-            logger.error("Failed to store security event", 
+            logger.error("Failed to store security event",
                         error=str(e), event_id=event.get("id"))
 
-    async def _store_api_events_batch(self, events: List[Dict[str, Any]]) -> None:
+    async def _store_api_events_batch(self, events: list[dict[str, Any]]) -> None:
         """Store multiple API call events in a single transaction.
-        
+
         Args:
             events: List of API call events to store
         """
         if not events or not self.db_pool:
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 values = []
@@ -1070,7 +1079,7 @@ class AuditLogger:
                         event.get("error_message"),
                         event.get("trace_id"),
                     ))
-                
+
                 await conn.executemany(
                     """
                     INSERT INTO api_call_logs (
@@ -1081,30 +1090,30 @@ class AuditLogger:
                     """,
                     values
                 )
-                
+
                 logger.debug("Stored API events batch", count=len(events))
-                
+
         except Exception as e:
-            logger.error("Failed to store API events batch", 
+            logger.error("Failed to store API events batch",
                         error=str(e), batch_size=len(events))
             # Fall back to individual inserts
             for event in events:
                 try:
                     await self._store_api_call(event)
                 except Exception as individual_error:
-                    logger.error("Failed to store individual API event", 
+                    logger.error("Failed to store individual API event",
                                error=str(individual_error), event_id=event.get("id"))
 
-    async def _store_api_call(self, event: Dict[str, Any]) -> None:
+    async def _store_api_call(self, event: dict[str, Any]) -> None:
         """Store single API call log in database.
-        
+
         Args:
             event: API call event to store
         """
         if not self.db_pool:
             logger.error("Database pool not available")
             return
-            
+
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -1135,7 +1144,7 @@ class AuditLogger:
                     event.get("trace_id"),
                 )
         except Exception as e:
-            logger.error("Failed to store API call event", 
+            logger.error("Failed to store API call event",
                         error=str(e), event_id=event.get("id"))
 
     # Security analysis methods
@@ -1166,7 +1175,7 @@ class AuditLogger:
                     severity=SecuritySeverity.HIGH,
                 )
 
-    async def _send_security_alert(self, event: Dict[str, Any]):
+    async def _send_security_alert(self, event: dict[str, Any]):
         """Send security alert for high severity events."""
         # This would integrate with your alerting system
         # For now, just log the alert
@@ -1202,13 +1211,13 @@ class AuditLogger:
     # Query methods
     async def get_audit_logs(
         self,
-        user_id: Optional[uuid.UUID] = None,
-        action: Optional[str] = None,
-        resource: Optional[str] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        user_id: uuid.UUID | None = None,
+        action: str | None = None,
+        resource: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get audit logs with filtering."""
         conditions = []
         params = []
@@ -1257,13 +1266,13 @@ class AuditLogger:
 
     async def get_security_events(
         self,
-        event_type: Optional[str] = None,
-        severity: Optional[str] = None,
-        resolved: Optional[bool] = None,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
+        event_type: str | None = None,
+        severity: str | None = None,
+        resolved: bool | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get security events with filtering."""
         conditions = []
         params = []
@@ -1312,7 +1321,7 @@ class AuditLogger:
 
     async def get_audit_statistics(
         self, start_time: datetime, end_time: datetime
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get audit statistics for a time period."""
         async with self.db_pool.acquire() as conn:
             # Total events
@@ -1369,7 +1378,7 @@ audit_logger = AuditLogger()
 # Context manager for request tracing
 @asynccontextmanager
 async def audit_context(
-    action: str, resource: str, user_id: Optional[uuid.UUID] = None
+    action: str, resource: str, user_id: uuid.UUID | None = None
 ):
     """Context manager for audit logging."""
     start_time = datetime.utcnow()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Advanced Vector Compression and Storage Efficiency for mem0ai
+"""Advanced Vector Compression and Storage Efficiency for mem0ai.
+
 Production-grade compression algorithms for optimal storage and performance.
 """
 
@@ -12,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import asyncpg
 import blosc2
@@ -27,6 +28,9 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Constants
+HIGH_DIMENSIONAL_THRESHOLD = 512
 
 
 class CompressionMethod(Enum):
@@ -58,7 +62,7 @@ class CompressionConfig:
     """Configuration for vector compression."""
 
     method: CompressionMethod = CompressionMethod.HYBRID
-    target_dimensions: Optional[int] = None  # For dimensionality reduction
+    target_dimensions: int | None = None  # For dimensionality reduction
     quantization_bits: QuantizationBits = QuantizationBits.FLOAT16
     pq_subvectors: int = 8  # Product quantization subvectors
     pq_bits: int = 8  # Bits per subvector
@@ -80,7 +84,7 @@ class CompressionResult:
     decompression_time_ms: float
     accuracy_loss: float
     method_used: CompressionMethod
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -88,11 +92,11 @@ class CompressedVector:
     """Compressed vector representation."""
 
     data: bytes
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     method: CompressionMethod
     original_dimensions: int
-    compressed_dimensions: Optional[int]
-    quantization_info: Optional[Dict]
+    compressed_dimensions: int | None
+    quantization_info: dict | None
     checksum: str
 
 
@@ -121,8 +125,8 @@ class VectorQuantizer:
             # Calculate variance explained
             explained_variance = np.sum(self.pca_model.explained_variance_ratio_)
             logger.info(
-                f"PCA fitted: {vectors.shape[1]} -> {target_dim} dims, "
-                f"variance explained: {explained_variance:.3f}"
+                "PCA fitted: %s -> %s dims, variance explained: %.3f",
+                vectors.shape[1], target_dim, explained_variance
             )
 
     def transform_pca(self, vectors: np.ndarray) -> np.ndarray:
@@ -160,7 +164,8 @@ class VectorQuantizer:
             self.projection_model.fit(vectors)
 
             logger.info(
-                f"Random projection fitted: {vectors.shape[1]} -> {target_dim} dims"
+                "Random projection fitted: %s -> %s dims",
+                vectors.shape[1], target_dim
             )
 
     def transform_random_projection(self, vectors: np.ndarray) -> np.ndarray:
@@ -192,8 +197,8 @@ class VectorQuantizer:
             self.pq_index.train(training_vectors)
 
             logger.info(
-                f"Product quantization fitted: {d} dims, "
-                f"{self.config.pq_subvectors} subvectors, {self.config.pq_bits} bits"
+                "Product quantization fitted: %s dims, %s subvectors, %s bits",
+                d, self.config.pq_subvectors, self.config.pq_bits
             )
 
     def transform_product_quantization(self, vectors: np.ndarray) -> bytes:
@@ -227,7 +232,7 @@ class VectorQuantizer:
         decoded = self.pq_index.sa_decode(codes_array)
         return decoded
 
-    def scalar_quantization(self, vectors: np.ndarray) -> Tuple[bytes, Dict[str, Any]]:
+    def scalar_quantization(self, vectors: np.ndarray) -> tuple[bytes, dict[str, Any]]:
         """Apply scalar quantization."""
         if self.config.quantization_bits == QuantizationBits.FLOAT16:
             quantized = vectors.astype(np.float16)
@@ -260,7 +265,7 @@ class VectorQuantizer:
         return quantized.tobytes(), quantization_info
 
     def inverse_scalar_quantization(
-        self, data: bytes, quantization_info: Dict[str, Any]
+        self, data: bytes, quantization_info: dict[str, Any]
     ) -> np.ndarray:
         """Inverse scalar quantization."""
         dtype = quantization_info["dtype"]
@@ -332,89 +337,146 @@ class CompressionEngine:
         else:
             return data
 
-    async def compress_vectors(
-        self, vectors: Union[np.ndarray, List[List[float]]], user_id: Optional[str] = None
-    ) -> List[CompressedVector]:
-        """Compress a batch of vectors."""
+    def _prepare_vectors(
+        self, vectors: np.ndarray | list[list[float]]
+    ) -> tuple[np.ndarray, int]:
+        """Prepare vectors for compression."""
         # Convert to numpy array if needed
         if not isinstance(vectors, np.ndarray):
             vectors = np.array(vectors, dtype=np.float32)
-        
+
         if len(vectors.shape) == 1:
             vectors = vectors.reshape(1, -1)
-        
+
         # Ensure vectors are float32 for consistency
         vectors = vectors.astype(np.float32)
-
-        start_time = time.time()
         original_size = vectors.nbytes
 
+        return vectors, original_size
+
+    def _compress_none(
+        self, vectors: np.ndarray
+    ) -> list[CompressedVector]:
+        """No compression method."""
+        compressed_vectors = []
+        for i, vector in enumerate(vectors):
+            data = vector.astype(np.float32).tobytes()
+            compressed_vectors.append(
+                CompressedVector(
+                    data=data,
+                    metadata={"index": i},
+                    method=CompressionMethod.NONE,
+                    original_dimensions=len(vector),
+                    compressed_dimensions=len(vector),
+                    quantization_info=None,
+                    checksum=self._calculate_checksum(data),
+                )
+            )
+        return compressed_vectors
+
+    def _compress_pca(
+        self, vectors: np.ndarray
+    ) -> list[CompressedVector]:
+        """PCA compression method."""
+        if self.quantizer.pca_model is None:
+            self.quantizer.fit_pca(vectors)
+
+        compressed_data = self.quantizer.transform_pca(vectors)
+        data_bytes, quant_info = self.quantizer.scalar_quantization(compressed_data)
+        data_bytes = self._apply_general_compression(data_bytes, "lz4")
+
+        compressed_vectors = []
+        for i in range(len(vectors)):
+            compressed_vectors.append(
+                CompressedVector(
+                    data=data_bytes,
+                    metadata={"index": i, "method": "pca"},
+                    method=CompressionMethod.PCA,
+                    original_dimensions=vectors.shape[1],
+                    compressed_dimensions=compressed_data.shape[1],
+                    quantization_info=quant_info,
+                    checksum=self._calculate_checksum(data_bytes),
+                )
+            )
+        return compressed_vectors
+
+    def _compress_random_projection(
+        self, vectors: np.ndarray
+    ) -> list[CompressedVector]:
+        """Random projection compression method."""
+        if self.quantizer.projection_model is None:
+            self.quantizer.fit_random_projection(vectors)
+
+        compressed_data = self.quantizer.transform_random_projection(vectors)
+        data_bytes, quant_info = self.quantizer.scalar_quantization(compressed_data)
+        data_bytes = self._apply_general_compression(data_bytes, "lz4")
+
+        compressed_vectors = []
+        for i in range(len(vectors)):
+            compressed_vectors.append(
+                CompressedVector(
+                    data=data_bytes,
+                    metadata={"index": i, "method": "random_projection"},
+                    method=CompressionMethod.RANDOM_PROJECTION,
+                    original_dimensions=vectors.shape[1],
+                    compressed_dimensions=compressed_data.shape[1],
+                    quantization_info=quant_info,
+                    checksum=self._calculate_checksum(data_bytes),
+                )
+            )
+        return compressed_vectors
+
+    def _compress_hybrid(
+        self, vectors: np.ndarray
+    ) -> list[CompressedVector]:
+        """Hybrid compression method."""
+        # Step 1: Dimensionality reduction
+        if vectors.shape[1] > HIGH_DIMENSIONAL_THRESHOLD:
+            if self.quantizer.pca_model is None:
+                self.quantizer.fit_pca(vectors)
+            vectors = self.quantizer.transform_pca(vectors)
+
+        # Step 2: Scalar quantization
+        data_bytes, quant_info = self.quantizer.scalar_quantization(vectors)
+
+        # Step 3: General compression
+        data_bytes = self._apply_general_compression(data_bytes, "blosc2")
+
+        compressed_vectors = []
+        for i in range(len(vectors)):
+            compressed_vectors.append(
+                CompressedVector(
+                    data=data_bytes,
+                    metadata={"index": i, "method": "hybrid"},
+                    method=CompressionMethod.HYBRID,
+                    original_dimensions=vectors.shape[1],
+                    compressed_dimensions=vectors.shape[1],
+                    quantization_info=quant_info,
+                    checksum=self._calculate_checksum(data_bytes),
+                )
+            )
+        return compressed_vectors
+
+    async def compress_vectors(
+        self, vectors: np.ndarray | list[list[float]], user_id: str | None = None
+    ) -> list[CompressedVector]:
+        """Compress a batch of vectors."""
+        # Prepare vectors
+        vectors, original_size = self._prepare_vectors(vectors)
+
+        start_time = time.time()
         compressed_vectors = []
 
         try:
+            # Route to appropriate compression method
             if self.config.method == CompressionMethod.NONE:
-                # No compression
-                for i, vector in enumerate(vectors):
-                    data = vector.astype(np.float32).tobytes()
-                    compressed_vectors.append(
-                        CompressedVector(
-                            data=data,
-                            metadata={"index": i},
-                            method=CompressionMethod.NONE,
-                            original_dimensions=len(vector),
-                            compressed_dimensions=len(vector),
-                            quantization_info=None,
-                            checksum=self._calculate_checksum(data),
-                        )
-                    )
+                compressed_vectors = self._compress_none(vectors)
 
             elif self.config.method == CompressionMethod.PCA:
-                # PCA compression
-                if self.quantizer.pca_model is None:
-                    self.quantizer.fit_pca(vectors)
-
-                compressed_data = self.quantizer.transform_pca(vectors)
-                data_bytes, quant_info = self.quantizer.scalar_quantization(
-                    compressed_data
-                )
-                data_bytes = self._apply_general_compression(data_bytes, "lz4")
-
-                for i in range(len(vectors)):
-                    compressed_vectors.append(
-                        CompressedVector(
-                            data=data_bytes,
-                            metadata={"index": i, "method": "pca"},
-                            method=CompressionMethod.PCA,
-                            original_dimensions=vectors.shape[1],
-                            compressed_dimensions=compressed_data.shape[1],
-                            quantization_info=quant_info,
-                            checksum=self._calculate_checksum(data_bytes),
-                        )
-                    )
+                compressed_vectors = self._compress_pca(vectors)
 
             elif self.config.method == CompressionMethod.RANDOM_PROJECTION:
-                # Random projection compression
-                if self.quantizer.projection_model is None:
-                    self.quantizer.fit_random_projection(vectors)
-
-                compressed_data = self.quantizer.transform_random_projection(vectors)
-                data_bytes, quant_info = self.quantizer.scalar_quantization(
-                    compressed_data
-                )
-                data_bytes = self._apply_general_compression(data_bytes, "lz4")
-
-                for i in range(len(vectors)):
-                    compressed_vectors.append(
-                        CompressedVector(
-                            data=data_bytes,
-                            metadata={"index": i, "method": "random_projection"},
-                            method=CompressionMethod.RANDOM_PROJECTION,
-                            original_dimensions=vectors.shape[1],
-                            compressed_dimensions=compressed_data.shape[1],
-                            quantization_info=quant_info,
-                            checksum=self._calculate_checksum(data_bytes),
-                        )
-                    )
+                compressed_vectors = self._compress_random_projection(vectors)
 
             elif self.config.method == CompressionMethod.PRODUCT_QUANTIZATION:
                 # Product quantization
@@ -455,32 +517,7 @@ class CompressionEngine:
                     )
 
             elif self.config.method == CompressionMethod.HYBRID:
-                # Hybrid approach: dimensionality reduction + quantization + compression
-
-                # Step 1: Dimensionality reduction
-                if vectors.shape[1] > 512:  # Only if high dimensional
-                    if self.quantizer.pca_model is None:
-                        self.quantizer.fit_pca(vectors)
-                    vectors = self.quantizer.transform_pca(vectors)
-
-                # Step 2: Scalar quantization
-                data_bytes, quant_info = self.quantizer.scalar_quantization(vectors)
-
-                # Step 3: General compression
-                data_bytes = self._apply_general_compression(data_bytes, "blosc2")
-
-                for i in range(len(vectors)):
-                    compressed_vectors.append(
-                        CompressedVector(
-                            data=data_bytes,
-                            metadata={"index": i, "method": "hybrid"},
-                            method=CompressionMethod.HYBRID,
-                            original_dimensions=vectors.shape[1],
-                            compressed_dimensions=vectors.shape[1],
-                            quantization_info=quant_info,
-                            checksum=self._calculate_checksum(data_bytes),
-                        )
-                    )
+                compressed_vectors = self._compress_hybrid(vectors)
 
             # Calculate compression statistics
             total_compressed_size = sum(len(cv.data) for cv in compressed_vectors)
@@ -493,19 +530,19 @@ class CompressionEngine:
             self.stats["total_compressed_size"] += total_compressed_size
 
             logger.info(
-                f"Compressed {len(vectors)} vectors: "
-                f"{original_size} -> {total_compressed_size} bytes "
-                f"({total_compressed_size/original_size:.3f} ratio) in {compression_time:.2f}ms"
+                "Compressed %s vectors: %s -> %s bytes (%.3f ratio) in %.2fms",
+                len(vectors), original_size, total_compressed_size,
+                total_compressed_size/original_size, compression_time
             )
 
             return compressed_vectors
 
         except Exception as e:
-            logger.error(f"Vector compression failed: {e}")
+            logger.error("Vector compression failed: %s", e)
             raise
 
     async def decompress_vectors(
-        self, compressed_vectors: List[CompressedVector]
+        self, compressed_vectors: list[CompressedVector]
     ) -> np.ndarray:
         """Decompress vectors back to original format."""
         start_time = time.time()
@@ -589,16 +626,17 @@ class CompressionEngine:
             self.stats["total_decompression_time"] += decompression_time
 
             logger.info(
-                f"Decompressed {len(compressed_vectors)} vectors in {decompression_time:.2f}ms"
+                "Decompressed %s vectors in %.2fms",
+                len(compressed_vectors), decompression_time
             )
 
             return result
 
         except Exception as e:
-            logger.error(f"Vector decompression failed: {e}")
+            logger.error("Vector decompression failed: %s", e)
             raise
 
-    def get_compression_stats(self) -> Dict:
+    def get_compression_stats(self) -> dict:
         """Get compression statistics."""
         stats = self.stats.copy()
 
@@ -624,7 +662,7 @@ class CompressionEngine:
 
     def benchmark_compression_methods(
         self, test_vectors: np.ndarray
-    ) -> Dict[str, CompressionResult]:
+    ) -> dict[str, CompressionResult]:
         """Benchmark different compression methods."""
         results = {}
         original_size = test_vectors.nbytes
@@ -677,7 +715,7 @@ class CompressionEngine:
                 )
 
             except Exception as e:
-                logger.error(f"Benchmark failed for method {method.value}: {e}")
+                logger.error("Benchmark failed for method %s: %s", method.value, e)
                 results[method.value] = CompressionResult(
                     original_size_bytes=original_size,
                     compressed_size_bytes=original_size,
@@ -738,8 +776,8 @@ class DatabaseCompressionManager:
             await self.pool.close()
 
     async def compress_and_store(
-        self, memory_ids: List[str], user_id: str
-    ) -> Dict[str, bool]:
+        self, memory_ids: list[str], user_id: str
+    ) -> dict[str, bool]:
         """Compress vectors and store compressed versions."""
         results = {}
 
@@ -770,7 +808,7 @@ class DatabaseCompressionManager:
 
                 # Store compressed vectors
                 for memory_id, compressed_vector in zip(
-                    db_memory_ids, compressed_vectors
+                    db_memory_ids, compressed_vectors, strict=False
                 ):
                     try:
                         await conn.execute(
@@ -806,18 +844,18 @@ class DatabaseCompressionManager:
 
                     except Exception as e:
                         logger.error(
-                            f"Failed to store compressed vector for {memory_id}: {e}"
+                            "Failed to store compressed vector for %s: %s", memory_id, e
                         )
                         results[memory_id] = False
 
             except Exception as e:
-                logger.error(f"Compression failed: {e}")
+                logger.error("Compression failed: %s", e)
                 for memory_id in db_memory_ids:
                     results[memory_id] = False
 
         return results
 
-    async def get_compression_analytics(self, user_id: str) -> Dict:
+    async def get_compression_analytics(self, user_id: str) -> dict:
         """Get compression analytics for user."""
         async with self.pool.acquire() as conn:
             stats = await conn.fetchrow(
@@ -871,7 +909,7 @@ async def main():
     """Test the compression system."""
     import uuid
 
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
 
     # Test compression engine
 
@@ -891,7 +929,7 @@ async def main():
 
     # Test database compression manager
 
-    manager = DatabaseCompressionManager(DB_URL)
+    manager = DatabaseCompressionManager(db_url)
 
     try:
         await manager.initialize()
@@ -905,7 +943,7 @@ async def main():
         await manager.get_compression_analytics("test_user")
 
     except Exception as e:
-        logger.error(f"Database testing failed: {e}")
+        logger.error("Database testing failed: %s", e)
     finally:
         await manager.cleanup()
 

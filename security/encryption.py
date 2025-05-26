@@ -3,11 +3,12 @@
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 from datetime import datetime
 from datetime import timedelta
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from cryptography.fernet import Fernet
 from cryptography.fernet import MultiFernet
@@ -17,6 +18,8 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 from config.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 
 
@@ -24,6 +27,7 @@ class EncryptionManager:
     """Main encryption manager for all cryptographic operations."""
 
     def __init__(self):
+        """Initialize encryption manager."""
         self.settings = settings
         self._fernet_key = None
         self._fernet = None
@@ -79,7 +83,7 @@ class EncryptionManager:
         return self._multi_fernet
 
     # Symmetric encryption for data at rest
-    def encrypt_data(self, data: Union[str, bytes, dict]) -> str:
+    def encrypt_data(self, data: str | bytes | dict) -> str:
         """Encrypt data for storage."""
         if isinstance(data, dict):
             data = json.dumps(data)
@@ -97,7 +101,7 @@ class EncryptionManager:
             decrypted = self.multi_fernet.decrypt(encrypted_bytes)
             return decrypted.decode("utf-8")
         except Exception as e:
-            raise ValueError(f"Failed to decrypt data: {e!s}")
+            raise ValueError(f"Failed to decrypt data: {e!s}") from e
 
     def encrypt_json(self, data: dict) -> str:
         """Encrypt JSON data."""
@@ -133,24 +137,24 @@ class EncryptionManager:
             else:
                 raise ValueError("Field context mismatch")
         except Exception as e:
-            raise ValueError(f"Failed to decrypt field {field_name}: {e!s}")
+            raise ValueError(f"Failed to decrypt field {field_name}: {e!s}") from e
 
     # Vector embedding encryption
-    def encrypt_vector(self, vector: List[float]) -> str:
+    def encrypt_vector(self, vector: list[float]) -> str:
         """Encrypt vector embeddings."""
         # Convert to bytes for encryption
         vector_bytes = json.dumps(vector).encode("utf-8")
         return self.encrypt_data(vector_bytes)
 
-    def decrypt_vector(self, encrypted_vector: str) -> List[float]:
+    def decrypt_vector(self, encrypted_vector: str) -> list[float]:
         """Decrypt vector embeddings."""
         decrypted_str = self.decrypt_data(encrypted_vector)
         return json.loads(decrypted_str)
 
     # Memory content encryption
     def encrypt_memory_content(
-        self, content: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, str]:
+        self, content: str, metadata: dict[str, Any] | None = None
+    ) -> dict[str, str]:
         """Encrypt memory content with metadata."""
         result = {
             "content": self.encrypt_data(content),
@@ -163,8 +167,8 @@ class EncryptionManager:
         return result
 
     def decrypt_memory_content(
-        self, encrypted_memory: Dict[str, str]
-    ) -> Dict[str, Any]:
+        self, encrypted_memory: dict[str, str]
+    ) -> dict[str, Any]:
         """Decrypt memory content."""
         result = {
             "content": self.decrypt_data(encrypted_memory["content"]),
@@ -177,7 +181,7 @@ class EncryptionManager:
         return result
 
     # Password hashing (one-way encryption)
-    def hash_password(self, password: str, salt: Optional[bytes] = None) -> Tuple[str, str]:
+    def hash_password(self, password: str, salt: bytes | None = None) -> tuple[str, str]:
         """Hash password with salt."""
         if salt is None:
             salt = os.urandom(32)
@@ -249,6 +253,7 @@ class TLSManager:
     """TLS/SSL configuration manager."""
 
     def __init__(self):
+        """Initialize TLS manager."""
         self.settings = settings
 
     def get_ssl_context(self):
@@ -286,11 +291,12 @@ class DatabaseEncryption:
     """Database-specific encryption utilities."""
 
     def __init__(self, encryption_manager: EncryptionManager):
+        """Initialize database encryption utilities."""
         self.encryption = encryption_manager
 
     def encrypt_row(
-        self, row_data: Dict[str, Any], encrypted_fields: List[str]
-    ) -> Dict[str, Any]:
+        self, row_data: dict[str, Any], encrypted_fields: list[str]
+    ) -> dict[str, Any]:
         """Encrypt specified fields in a database row."""
         result = row_data.copy()
 
@@ -301,8 +307,8 @@ class DatabaseEncryption:
         return result
 
     def decrypt_row(
-        self, row_data: Dict[str, Any], encrypted_fields: List[str]
-    ) -> Dict[str, Any]:
+        self, row_data: dict[str, Any], encrypted_fields: list[str]
+    ) -> dict[str, Any]:
         """Decrypt specified fields in a database row."""
         result = row_data.copy()
 
@@ -310,9 +316,9 @@ class DatabaseEncryption:
             if field in result and result[field] is not None:
                 try:
                     result[field] = self.encryption.decrypt_field(result[field], field)
-                except Exception:
+                except Exception as e:
                     # Field might not be encrypted (legacy data)
-                    pass
+                    logger.debug("Failed to decrypt field %s, likely unencrypted legacy data: %s", field, e)
 
         return result
 
@@ -327,9 +333,10 @@ class TokenEncryption:
     """Token encryption for secure token transmission."""
 
     def __init__(self, encryption_manager: EncryptionManager):
+        """Initialize token encryption utilities."""
         self.encryption = encryption_manager
 
-    def create_secure_token(self, data: Dict[str, Any], expires_in: int = 3600) -> str:
+    def create_secure_token(self, data: dict[str, Any], expires_in: int = 3600) -> str:
         """Create encrypted token with expiration."""
         expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
 
@@ -341,7 +348,7 @@ class TokenEncryption:
 
         return self.encryption.encrypt_json(token_data)
 
-    def verify_secure_token(self, token: str) -> Optional[Dict[str, Any]]:
+    def verify_secure_token(self, token: str) -> dict[str, Any] | None:
         """Verify and decrypt secure token."""
         try:
             token_data = self.encryption.decrypt_json(token)
@@ -360,9 +367,10 @@ class BackupEncryption:
     """Encryption for backup data."""
 
     def __init__(self, encryption_manager: EncryptionManager):
+        """Initialize backup encryption utilities."""
         self.encryption = encryption_manager
 
-    def encrypt_backup(self, backup_data: Dict[str, Any]) -> str:
+    def encrypt_backup(self, backup_data: dict[str, Any]) -> str:
         """Encrypt backup data."""
         backup_with_metadata = {
             "data": backup_data,
@@ -373,7 +381,7 @@ class BackupEncryption:
 
         return self.encryption.encrypt_json(backup_with_metadata)
 
-    def decrypt_backup(self, encrypted_backup: str) -> Dict[str, Any]:
+    def decrypt_backup(self, encrypted_backup: str) -> dict[str, Any]:
         """Decrypt and verify backup data."""
         backup_with_metadata = self.encryption.decrypt_json(encrypted_backup)
 
@@ -386,7 +394,7 @@ class BackupEncryption:
 
         return backup_with_metadata["data"]
 
-    def _calculate_checksum(self, data: Dict[str, Any]) -> str:
+    def _calculate_checksum(self, data: dict[str, Any]) -> str:
         """Calculate checksum for data integrity."""
         data_str = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(data_str.encode("utf-8")).hexdigest()

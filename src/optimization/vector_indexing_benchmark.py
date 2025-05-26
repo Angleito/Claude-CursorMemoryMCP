@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Vector Indexing Strategies and Performance Benchmarking for mem0ai
+"""Vector Indexing Strategies and Performance Benchmarking for mem0ai.
+
 Production-grade benchmarking for HNSW vs IVF indexing strategies.
 """
 
@@ -12,9 +13,6 @@ import time
 from dataclasses import asdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict
-from typing import List
-from typing import Optional
 
 import asyncpg
 import numpy as np
@@ -26,20 +24,26 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Benchmark constants
+MIN_GROUND_TRUTH_SIZE = 0
+SMALL_DATASET_THRESHOLD = 50000
+MEDIUM_DATASET_THRESHOLD = 10000
+LARGE_DATASET_THRESHOLD = 50000
+
 
 @dataclass
 class BenchmarkConfig:
     """Configuration for vector indexing benchmarks."""
 
     vector_dimensions: int = 1536
-    dataset_sizes: List[int] = None
-    index_types: List[str] = None
-    similarity_thresholds: List[float] = None
-    batch_sizes: List[int] = None
-    hnsw_m_values: List[int] = None
-    hnsw_ef_construction_values: List[int] = None
-    ivf_lists_values: List[int] = None
-    query_counts: List[int] = None
+    dataset_sizes: list[int] = None
+    index_types: list[str] = None
+    similarity_thresholds: list[float] = None
+    batch_sizes: list[int] = None
+    hnsw_m_values: list[int] = None
+    hnsw_ef_construction_values: list[int] = None
+    ivf_lists_values: list[int] = None
+    query_counts: list[int] = None
 
     def __post_init__(self):
         if self.dataset_sizes is None:
@@ -68,7 +72,7 @@ class BenchmarkResult:
     dataset_size: int
     query_count: int
     batch_size: int
-    index_params: Dict
+    index_params: dict
     build_time_ms: float
     query_time_ms: float
     recall_at_10: float
@@ -111,7 +115,7 @@ class VectorIndexBenchmark:
         return vectors
 
     async def create_test_table(
-        self, table_name: str, index_type: str, index_params: Dict
+        self, table_name: str, index_type: str, index_params: dict
     ) -> None:
         """Create test table with specified index."""
         async with self.pool.acquire() as conn:
@@ -179,8 +183,8 @@ class VectorIndexBenchmark:
         self,
         table_name: str,
         query_vectors: np.ndarray,
-        k_values: Optional[List[int]] = None,
-    ) -> Dict:
+        k_values: list[int] | None = None,
+    ) -> dict:
         """Measure query performance for different k values."""
         if k_values is None:
             k_values = [10, 50, 100]
@@ -217,8 +221,8 @@ class VectorIndexBenchmark:
         table_name: str,
         query_vectors: np.ndarray,
         ground_truth_indices: np.ndarray,
-        k_values: Optional[List[int]] = None,
-    ) -> Dict:
+        k_values: list[int] | None = None,
+    ) -> dict:
         """Calculate recall@k for approximate methods vs ground truth."""
         if k_values is None:
             k_values = [10, 50, 100]
@@ -243,7 +247,7 @@ class VectorIndexBenchmark:
                     retrieved_ids = {row["id"] for row in results}
                     ground_truth_k = set(ground_truth_indices[i][:k])
 
-                    if len(ground_truth_k) > 0:
+                    if len(ground_truth_k) > MIN_GROUND_TRUTH_SIZE:
                         recall = len(retrieved_ids.intersection(ground_truth_k)) / len(
                             ground_truth_k
                         )
@@ -276,7 +280,7 @@ class VectorIndexBenchmark:
         self,
         dataset_size: int,
         index_type: str,
-        index_params: Dict,
+        index_params: dict,
         query_count: int,
         batch_size: int,
     ) -> BenchmarkResult:
@@ -285,8 +289,8 @@ class VectorIndexBenchmark:
 
         try:
             logger.info(
-                f"Running benchmark: {index_type}, size: {dataset_size}, "
-                f"params: {index_params}"
+                "Running benchmark: %s, size: %d, params: %s",
+                index_type, dataset_size, index_params
             )
 
             # Generate test data
@@ -353,7 +357,7 @@ class VectorIndexBenchmark:
             async with self.pool.acquire() as conn:
                 await conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
-    async def run_comprehensive_benchmark(self) -> List[BenchmarkResult]:
+    async def run_comprehensive_benchmark(self) -> list[BenchmarkResult]:
         """Run comprehensive benchmark suite."""
         results = []
 
@@ -365,7 +369,7 @@ class VectorIndexBenchmark:
                     for m in self.config.hnsw_m_values:
                         for ef_construction in self.config.hnsw_ef_construction_values:
                             if (
-                                dataset_size <= 50000
+                                dataset_size <= SMALL_DATASET_THRESHOLD
                             ):  # Avoid long builds for large datasets
                                 params = {"m": m, "ef_construction": ef_construction}
                                 result = await self.run_single_benchmark(
@@ -387,7 +391,7 @@ class VectorIndexBenchmark:
                             results.append(result)
 
                     # Brute force baseline (only for smaller datasets)
-                    if dataset_size <= 10000:
+                    if dataset_size <= MEDIUM_DATASET_THRESHOLD:
                         result = await self.run_single_benchmark(
                             dataset_size, "brute_force", {}, query_count, batch_size
                         )
@@ -395,7 +399,7 @@ class VectorIndexBenchmark:
 
         return results
 
-    def save_results(self, results: List[BenchmarkResult], filename: str):
+    def save_results(self, results: list[BenchmarkResult], filename: str):
         """Save benchmark results to JSON file."""
         results_dict = [asdict(result) for result in results]
 
@@ -406,9 +410,9 @@ class VectorIndexBenchmark:
         with open(filename, "w") as f:
             json.dump(results_dict, f, indent=2)
 
-        logger.info(f"Results saved to {filename}")
+        logger.info("Results saved to %s", filename)
 
-    def analyze_results(self, results: List[BenchmarkResult]) -> Dict:
+    def analyze_results(self, results: list[BenchmarkResult]) -> dict:
         """Analyze benchmark results and provide recommendations."""
         analysis = {
             "best_configurations": {},
@@ -470,7 +474,7 @@ class VectorIndexBenchmark:
                 )
 
         # Dataset size recommendations
-        large_dataset_results = [r for r in results if r.dataset_size >= 50000]
+        large_dataset_results = [r for r in results if r.dataset_size >= LARGE_DATASET_THRESHOLD]
         if large_dataset_results:
             best_large = min(large_dataset_results, key=lambda x: x.query_time_ms)
             analysis["recommendations"].append(
@@ -484,7 +488,7 @@ class VectorIndexBenchmark:
 async def main():
     """Main function to run benchmarks."""
     # Database configuration
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
 
     # Configure benchmark
     config = BenchmarkConfig(
@@ -497,7 +501,7 @@ async def main():
     )
 
     # Run benchmarks
-    benchmark = VectorIndexBenchmark(DB_URL, config)
+    benchmark = VectorIndexBenchmark(db_url, config)
 
     try:
         await benchmark.initialize()
@@ -518,7 +522,8 @@ async def main():
             json.dump(analysis, f, indent=2)
 
         logger.info(
-            f"Benchmark completed. Results: {results_file}, Analysis: {analysis_file}"
+            "Benchmark completed. Results: %s, Analysis: %s",
+            results_file, analysis_file
         )
 
         # Print summary

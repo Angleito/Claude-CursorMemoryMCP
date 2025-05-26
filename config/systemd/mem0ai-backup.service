@@ -12,9 +12,9 @@ OnFailure=mem0ai-backup-failure.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/mem0ai
-ExecStart=/opt/mem0ai/scripts/backup.sh
-ExecStartPre=/bin/bash -c 'test -x /opt/mem0ai/scripts/backup.sh'
+WorkingDirectory=/mem0ai
+ExecStart=/mem0ai/scripts/backup.sh
+ExecStartPre=/bin/bash -c 'test -x /mem0ai/scripts/backup.sh'
 User=mem0ai
 Group=mem0ai
 
@@ -34,7 +34,7 @@ RestartSec=300
 
 # Environment
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-EnvironmentFile=-/opt/mem0ai/.env
+EnvironmentFile=-/mem0ai/.env
 
 # Resource limits
 MemoryMax=2G
@@ -71,7 +71,7 @@ SystemCallFilter=~@debug @mount @cpu-emulation @obsolete @privileged @reboot @sw
 SystemCallErrorNumber=EPERM
 
 # File system access
-ReadWritePaths=/opt/mem0ai
+ReadWritePaths=/mem0ai
 ReadWritePaths=/tmp
 ReadOnlyPaths=/usr /lib /lib64 /etc/ssl /etc/ca-certificates
 InaccessiblePaths=/proc/sys /proc/sysrq-trigger /proc/latency_stats /proc/acpi /proc/timer_stats /proc/fs /sys/fs/cgroup
@@ -91,6 +91,6 @@ KeyringMode=private
 # 
 # [Service]
 # Type=oneshot
-# ExecStart=/opt/mem0ai/scripts/backup-failure-handler.sh
+# ExecStart=/mem0ai/scripts/backup-failure-handler.sh
 # User=mem0ai
 # Group=mem0ai

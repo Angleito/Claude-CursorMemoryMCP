@@ -2,22 +2,20 @@
 
 import asyncio
 import ipaddress
-import json
 import logging
 import re
 import socket
 import ssl
-import subprocess
 import time
-from collections import defaultdict, deque
+from collections import defaultdict
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from datetime import datetime
+from typing import Any
 
 import aiohttp
-import psutil
 from fastapi import Request
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from config.settings import get_settings
 from monitoring.audit_logger import audit_logger
@@ -25,30 +23,41 @@ from monitoring.audit_logger import audit_logger
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
+# HTTP status codes
+HTTP_OK = 200
+
+# Traffic and rate limiting constants
+LARGE_PAYLOAD_SIZE = 1000
+MEDIUM_PAYLOAD_SIZE = 500
+SMALL_PAYLOAD_SIZE = 100
+
+# Security monitoring constants
+CERTIFICATE_EXPIRY_WARNING_DAYS = 30
+
 
 @dataclass
 class SecurityEvent:
     """Represents a network security event."""
-    
+
     event_type: str
     source_ip: str
     destination_ip: str
     port: int
     timestamp: datetime
     severity: str
-    details: Dict[str, Any]
+    details: dict[str, Any]
     blocked: bool = False
 
 
 @dataclass
 class FirewallRule:
     """Represents a firewall rule."""
-    
+
     rule_id: str
     action: str  # allow, deny, drop
-    source_ip: Optional[str] = None
-    destination_ip: Optional[str] = None
-    port: Optional[int] = None
+    source_ip: str | None = None
+    destination_ip: str | None = None
+    port: int | None = None
     protocol: str = "tcp"
     description: str = ""
     enabled: bool = True
@@ -57,37 +66,37 @@ class FirewallRule:
 
 class ThreatIntelligence:
     """Threat intelligence and IP reputation management."""
-    
+
     def __init__(self):
-        self.malicious_ips: Set[str] = set()
-        self.suspicious_ips: Set[str] = set()
-        self.tor_exit_nodes: Set[str] = set()
-        self.vpn_ranges: Set[str] = set()
-        self.last_update: Optional[datetime] = None
-        
+        self.malicious_ips: set[str] = set()
+        self.suspicious_ips: set[str] = set()
+        self.tor_exit_nodes: set[str] = set()
+        self.vpn_ranges: set[str] = set()
+        self.last_update: datetime | None = None
+
     async def update_threat_feeds(self) -> None:
         """Update threat intelligence feeds from external sources."""
         try:
             # Update malicious IP feeds
             await self._update_malicious_ips()
-            
+
             # Update Tor exit nodes
             await self._update_tor_nodes()
-            
+
             # Update VPN ranges
             await self._update_vpn_ranges()
-            
+
             self.last_update = datetime.utcnow()
             logger.info("Threat intelligence feeds updated successfully")
-            
+
         except Exception as e:
-            logger.error(f"Failed to update threat feeds: {e}")
+            logger.error("Failed to update threat feeds: %s", e)
             await audit_logger.log_security_event(
                 event_type="threat_feed_update_failed",
                 details={"error": str(e)},
                 severity="medium"
             )
-    
+
     async def _update_malicious_ips(self) -> None:
         """Update malicious IP database from threat feeds."""
         try:
@@ -96,44 +105,44 @@ class ThreatIntelligence:
                 "https://feeds.firehol.org/ipsets/firehol_level1.netset",
                 "https://reputation.alienvault.com/reputation.data"
             ]
-            
+
             new_ips = set()
-            
+
             async with aiohttp.ClientSession() as session:
                 for feed_url in feeds:
                     try:
                         async with session.get(feed_url, timeout=30) as response:
-                            if response.status == 200:
+                            if response.status == HTTP_OK:
                                 content = await response.text()
                                 # Parse IP addresses from feed
                                 ips = self._parse_ip_feed(content)
                                 new_ips.update(ips)
                     except Exception as e:
-                        logger.warning(f"Failed to fetch threat feed {feed_url}: {e}")
-            
+                        logger.warning("Failed to fetch threat feed %s: %s", feed_url, e)
+
             self.malicious_ips = new_ips
-            logger.info(f"Updated {len(new_ips)} malicious IPs")
-            
+            logger.info("Updated %s malicious IPs", len(new_ips))
+
         except Exception as e:
-            logger.error(f"Failed to update malicious IPs: {e}")
-    
+            logger.error("Failed to update malicious IPs: %s", e)
+
     async def _update_tor_nodes(self) -> None:
         """Update Tor exit node list."""
         try:
             url = "https://check.torproject.org/torbulkexitlist"
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=30) as response:
-                    if response.status == 200:
+                    if response.status == HTTP_OK:
                         content = await response.text()
-                        tor_ips = set(line.strip() for line in content.split('\n') 
-                                    if line.strip() and not line.startswith('#'))
+                        tor_ips = {line.strip() for line in content.split('\n')
+                                    if line.strip() and not line.startswith('#')}
                         self.tor_exit_nodes = tor_ips
-                        logger.info(f"Updated {len(tor_ips)} Tor exit nodes")
-                        
+                        logger.info("Updated %s Tor exit nodes", len(tor_ips))
+
         except Exception as e:
-            logger.error(f"Failed to update Tor nodes: {e}")
-    
+            logger.error("Failed to update Tor nodes: %s", e)
+
     async def _update_vpn_ranges(self) -> None:
         """Update known VPN IP ranges."""
         try:
@@ -144,27 +153,27 @@ class ThreatIntelligence:
                 "103.231.88.0/23",   # ExpressVPN
                 "141.98.80.0/20",    # Surfshark
             ]
-            
+
             self.vpn_ranges = set(known_vpn_ranges)
-            logger.info(f"Updated {len(known_vpn_ranges)} VPN ranges")
-            
+            logger.info("Updated %s VPN ranges", len(known_vpn_ranges))
+
         except Exception as e:
-            logger.error(f"Failed to update VPN ranges: {e}")
-    
-    def _parse_ip_feed(self, content: str) -> Set[str]:
+            logger.error("Failed to update VPN ranges: %s", e)
+
+    def _parse_ip_feed(self, content: str) -> set[str]:
         """Parse IP addresses from threat feed content."""
         ips = set()
-        
+
         # Regular expression to match IP addresses
         ip_pattern = re.compile(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b')
-        
+
         for line in content.split('\n'):
             line = line.strip()
-            
+
             # Skip comments and empty lines
             if not line or line.startswith('#'):
                 continue
-                
+
             # Extract IP addresses
             matches = ip_pattern.findall(line)
             for ip in matches:
@@ -174,17 +183,17 @@ class ThreatIntelligence:
                     ips.add(ip)
                 except ValueError:
                     continue
-        
+
         return ips
-    
+
     def is_malicious_ip(self, ip: str) -> bool:
         """Check if IP is known to be malicious."""
         return ip in self.malicious_ips
-    
+
     def is_tor_exit_node(self, ip: str) -> bool:
         """Check if IP is a Tor exit node."""
         return ip in self.tor_exit_nodes
-    
+
     def is_vpn_ip(self, ip: str) -> bool:
         """Check if IP belongs to a VPN provider."""
         try:
@@ -196,8 +205,8 @@ class ThreatIntelligence:
         except ValueError:
             pass
         return False
-    
-    def get_ip_reputation(self, ip: str) -> Dict[str, Any]:
+
+    def get_ip_reputation(self, ip: str) -> dict[str, Any]:
         """Get comprehensive IP reputation information."""
         return {
             "ip": ip,
@@ -207,31 +216,31 @@ class ThreatIntelligence:
             "risk_score": self._calculate_risk_score(ip),
             "last_updated": self.last_update.isoformat() if self.last_update else None
         }
-    
+
     def _calculate_risk_score(self, ip: str) -> int:
         """Calculate risk score for IP address (0-100)."""
         score = 0
-        
+
         if self.is_malicious_ip(ip):
             score += 80
         if self.is_tor_exit_node(ip):
             score += 30
         if self.is_vpn_ip(ip):
             score += 20
-            
+
         return min(score, 100)
 
 
 class IntrusionDetectionSystem:
     """Network intrusion detection and prevention system."""
-    
+
     def __init__(self):
         self.threat_intel = ThreatIntelligence()
-        self.connection_tracking: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
-        self.blocked_ips: Set[str] = set()
-        self.suspicious_patterns: List[Dict[str, Any]] = []
+        self.connection_tracking: dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+        self.blocked_ips: set[str] = set()
+        self.suspicious_patterns: list[dict[str, Any]] = []
         self.load_attack_patterns()
-        
+
     def load_attack_patterns(self) -> None:
         """Load known attack patterns for detection."""
         self.suspicious_patterns = [
@@ -261,11 +270,11 @@ class IntrusionDetectionSystem:
                 "severity": "high"
             }
         ]
-    
+
     async def analyze_request(self, request: Request) -> SecurityEvent:
         """Analyze incoming request for security threats."""
         client_ip = self._get_client_ip(request)
-        
+
         # Basic request analysis
         event = SecurityEvent(
             event_type="request_analysis",
@@ -281,38 +290,38 @@ class IntrusionDetectionSystem:
                 "referer": request.headers.get("Referer", "")
             }
         )
-        
+
         # Check IP reputation
         reputation = self.threat_intel.get_ip_reputation(client_ip)
         event.details["ip_reputation"] = reputation
-        
+
         if reputation["is_malicious"]:
             event.event_type = "malicious_ip_detected"
             event.severity = "critical"
             event.blocked = True
-            
+
         # Analyze request for attack patterns
         await self._analyze_attack_patterns(request, event)
-        
+
         # Analyze request frequency (potential DoS)
         await self._analyze_request_frequency(client_ip, event)
-        
+
         # Track connection
         self._track_connection(client_ip, event)
-        
+
         return event
-    
+
     async def _analyze_attack_patterns(self, request: Request, event: SecurityEvent) -> None:
         """Analyze request for known attack patterns."""
         request_data = f"{request.url.path}?{request.url.query}"
-        
+
         # Check headers for suspicious content
         for header_name, header_value in request.headers.items():
             request_data += f"{header_name}:{header_value} "
-        
+
         # Check for attack patterns
         detected_attacks = []
-        
+
         for pattern_info in self.suspicious_patterns:
             pattern = pattern_info["pattern"]
             if re.search(pattern, request_data):
@@ -320,7 +329,7 @@ class IntrusionDetectionSystem:
                     "attack_type": pattern_info["name"],
                     "severity": pattern_info["severity"]
                 })
-                
+
                 # Update event severity
                 if pattern_info["severity"] == "critical":
                     event.severity = "critical"
@@ -329,57 +338,57 @@ class IntrusionDetectionSystem:
                     event.severity = "high"
                 elif pattern_info["severity"] == "medium" and event.severity in ["info", "low"]:
                     event.severity = "medium"
-        
+
         if detected_attacks:
             event.event_type = "attack_pattern_detected"
             event.details["detected_attacks"] = detected_attacks
-    
+
     async def _analyze_request_frequency(self, client_ip: str, event: SecurityEvent) -> None:
         """Analyze request frequency for DoS detection."""
         now = time.time()
         window = 60  # 1 minute window
-        
+
         # Get recent requests from this IP
         recent_requests = self.connection_tracking[client_ip]
-        
+
         # Count requests in the last minute
         recent_count = sum(1 for req_time in recent_requests if now - req_time < window)
-        
+
         # Thresholds for different severity levels
-        if recent_count > 1000:  # 1000 requests per minute
+        if recent_count > LARGE_PAYLOAD_SIZE:  # 1000 requests per minute
             event.event_type = "dos_attack_detected"
             event.severity = "critical"
             event.blocked = True
-        elif recent_count > 500:  # 500 requests per minute
+        elif recent_count > MEDIUM_PAYLOAD_SIZE:  # 500 requests per minute
             event.event_type = "high_frequency_requests"
             event.severity = "high"
-        elif recent_count > 100:  # 100 requests per minute
+        elif recent_count > SMALL_PAYLOAD_SIZE:  # 100 requests per minute
             event.event_type = "elevated_request_frequency"
             event.severity = "medium"
-        
+
         event.details["request_frequency"] = recent_count
-    
+
     def _track_connection(self, client_ip: str, event: SecurityEvent) -> None:
         """Track connection for pattern analysis."""
         self.connection_tracking[client_ip].append(time.time())
-        
+
         # Block IP if critical event detected
         if event.severity == "critical" and event.blocked:
             self.blocked_ips.add(client_ip)
-    
+
     def _get_client_ip(self, request: Request) -> str:
         """Extract client IP from request."""
         # Check for forwarded headers
         forwarded_for = request.headers.get("X-Forwarded-For")
         if forwarded_for:
             return forwarded_for.split(",")[0].strip()
-        
+
         real_ip = request.headers.get("X-Real-IP")
         if real_ip:
             return real_ip
-        
+
         return request.client.host
-    
+
     def _get_server_ip(self) -> str:
         """Get server IP address."""
         try:
@@ -388,30 +397,30 @@ class IntrusionDetectionSystem:
             return socket.gethostbyname(hostname)
         except Exception:
             return "127.0.0.1"
-    
+
     def is_ip_blocked(self, ip: str) -> bool:
         """Check if IP is currently blocked."""
         return ip in self.blocked_ips
-    
+
     def block_ip(self, ip: str, reason: str) -> None:
         """Block an IP address."""
         self.blocked_ips.add(ip)
-        logger.warning(f"Blocked IP {ip}: {reason}")
-    
+        logger.warning("Blocked IP %s: %s", ip, reason)
+
     def unblock_ip(self, ip: str) -> None:
         """Unblock an IP address."""
         self.blocked_ips.discard(ip)
-        logger.info(f"Unblocked IP {ip}")
+        logger.info("Unblocked IP %s", ip)
 
 
 class NetworkFirewall:
     """Software firewall implementation."""
-    
+
     def __init__(self):
-        self.rules: List[FirewallRule] = []
+        self.rules: list[FirewallRule] = []
         self.default_action = "deny"
         self.load_default_rules()
-    
+
     def load_default_rules(self) -> None:
         """Load default firewall rules."""
         default_rules = [
@@ -442,55 +451,52 @@ class NetworkFirewall:
                 description="Deny all other traffic by default"
             )
         ]
-        
+
         self.rules.extend(default_rules)
-    
+
     def add_rule(self, rule: FirewallRule) -> None:
         """Add a new firewall rule."""
         self.rules.append(rule)
-        logger.info(f"Added firewall rule: {rule.rule_id}")
-    
+        logger.info("Added firewall rule: %s", rule.rule_id)
+
     def remove_rule(self, rule_id: str) -> bool:
         """Remove a firewall rule by ID."""
         for i, rule in enumerate(self.rules):
             if rule.rule_id == rule_id:
                 del self.rules[i]
-                logger.info(f"Removed firewall rule: {rule_id}")
+                logger.info("Removed firewall rule: %s", rule_id)
                 return True
         return False
-    
+
     def check_connection(self, source_ip: str, dest_ip: str, port: int, protocol: str = "tcp") -> str:
         """Check if connection is allowed by firewall rules."""
         for rule in self.rules:
             if not rule.enabled:
                 continue
-                
+
             # Check if rule matches
             if self._rule_matches(rule, source_ip, dest_ip, port, protocol):
                 return rule.action
-        
+
         return self.default_action
-    
+
     def _rule_matches(self, rule: FirewallRule, source_ip: str, dest_ip: str, port: int, protocol: str) -> bool:
         """Check if a rule matches the connection parameters."""
         # Check protocol
-        if rule.protocol != "any" and rule.protocol != protocol:
+        if rule.protocol not in ("any", protocol):
             return False
-        
+
         # Check source IP
         if rule.source_ip and not self._ip_matches(source_ip, rule.source_ip):
             return False
-        
+
         # Check destination IP
         if rule.destination_ip and not self._ip_matches(dest_ip, rule.destination_ip):
             return False
-        
+
         # Check port
-        if rule.port and rule.port != port:
-            return False
-        
-        return True
-    
+        return not (rule.port and rule.port != port)
+
     def _ip_matches(self, ip: str, rule_ip: str) -> bool:
         """Check if IP matches rule (supports CIDR notation)."""
         try:
@@ -503,8 +509,8 @@ class NetworkFirewall:
                 return ip == rule_ip
         except ValueError:
             return False
-    
-    def get_rules(self) -> List[Dict[str, Any]]:
+
+    def get_rules(self) -> list[dict[str, Any]]:
         """Get all firewall rules."""
         return [
             {
@@ -524,7 +530,7 @@ class NetworkFirewall:
 
 class SSLSecurityChecker:
     """SSL/TLS security configuration checker."""
-    
+
     def __init__(self):
         self.weak_ciphers = [
             "RC4",
@@ -533,15 +539,15 @@ class SSLSecurityChecker:
             "MD5",
             "SHA1"
         ]
-        
+
         self.weak_protocols = [
             "SSLv2",
             "SSLv3",
             "TLSv1.0",
             "TLSv1.1"
         ]
-    
-    async def check_ssl_configuration(self, hostname: str, port: int = 443) -> Dict[str, Any]:
+
+    async def check_ssl_configuration(self, hostname: str, port: int = 443) -> dict[str, Any]:
         """Check SSL/TLS configuration of a host."""
         result = {
             "hostname": hostname,
@@ -553,45 +559,45 @@ class SSLSecurityChecker:
             "vulnerabilities": [],
             "security_score": 0
         }
-        
+
         try:
             # Check certificate
             cert_info = await self._check_certificate(hostname, port)
             result["certificate_info"] = cert_info
-            
+
             # Check protocol support
             protocol_support = await self._check_protocol_support(hostname, port)
             result["protocol_support"] = protocol_support
-            
+
             # Check cipher suites
             cipher_suites = await self._check_cipher_suites(hostname, port)
             result["cipher_suites"] = cipher_suites
-            
+
             # Identify vulnerabilities
             vulnerabilities = self._identify_vulnerabilities(cert_info, protocol_support, cipher_suites)
             result["vulnerabilities"] = vulnerabilities
-            
+
             # Calculate security score
             security_score = self._calculate_security_score(cert_info, protocol_support, cipher_suites, vulnerabilities)
             result["security_score"] = security_score
-            
+
         except Exception as e:
             result["error"] = str(e)
-            logger.error(f"Failed to check SSL configuration for {hostname}:{port}: {e}")
-        
+            logger.error("Failed to check SSL configuration for %s:%s: %s", hostname, port, e)
+
         return result
-    
-    async def _check_certificate(self, hostname: str, port: int) -> Dict[str, Any]:
+
+    async def _check_certificate(self, hostname: str, port: int) -> dict[str, Any]:
         """Check SSL certificate details."""
         cert_info = {}
-        
+
         try:
             context = ssl.create_default_context()
-            
+
             with socket.create_connection((hostname, port), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                     cert = ssock.getpeercert()
-                    
+
                     cert_info = {
                         "subject": dict(x[0] for x in cert.get("subject", [])),
                         "issuer": dict(x[0] for x in cert.get("issuer", [])),
@@ -602,20 +608,20 @@ class SSLSecurityChecker:
                         "signature_algorithm": cert.get("signatureAlgorithm"),
                         "san": cert.get("subjectAltName", [])
                     }
-                    
+
                     # Check if certificate is expired or expiring soon
                     not_after = datetime.strptime(cert.get("notAfter"), "%b %d %H:%M:%S %Y %Z")
                     days_until_expiry = (not_after - datetime.utcnow()).days
                     cert_info["days_until_expiry"] = days_until_expiry
                     cert_info["is_expired"] = days_until_expiry < 0
-                    cert_info["expires_soon"] = days_until_expiry < 30
-                    
+                    cert_info["expires_soon"] = days_until_expiry < CERTIFICATE_EXPIRY_WARNING_DAYS
+
         except Exception as e:
             cert_info["error"] = str(e)
-        
+
         return cert_info
-    
-    async def _check_protocol_support(self, hostname: str, port: int) -> Dict[str, bool]:
+
+    async def _check_protocol_support(self, hostname: str, port: int) -> dict[str, bool]:
         """Check which SSL/TLS protocols are supported."""
         protocols = {
             "SSLv2": ssl.PROTOCOL_SSLv23,  # This will be rejected by modern OpenSSL
@@ -625,35 +631,35 @@ class SSLSecurityChecker:
             "TLSv1.2": ssl.PROTOCOL_TLSv1_2,
             "TLSv1.3": getattr(ssl, 'PROTOCOL_TLSv1_3', None)
         }
-        
+
         support = {}
-        
+
         for protocol_name, protocol_const in protocols.items():
             if protocol_const is None:
                 support[protocol_name] = False
                 continue
-                
+
             try:
                 context = ssl.SSLContext(protocol_const)
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
-                
+
                 with socket.create_connection((hostname, port), timeout=5) as sock:
-                    with context.wrap_socket(sock) as ssock:
+                    with context.wrap_socket(sock):
                         support[protocol_name] = True
-                        
+
             except Exception:
                 support[protocol_name] = False
-        
+
         return support
-    
-    async def _check_cipher_suites(self, hostname: str, port: int) -> List[str]:
+
+    async def _check_cipher_suites(self, hostname: str, port: int) -> list[str]:
         """Check supported cipher suites."""
         cipher_suites = []
-        
+
         try:
             context = ssl.create_default_context()
-            
+
             with socket.create_connection((hostname, port), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                     cipher = ssock.cipher()
@@ -663,16 +669,16 @@ class SSLSecurityChecker:
                             "protocol": cipher[1],
                             "bits": cipher[2]
                         })
-                        
+
         except Exception as e:
-            logger.error(f"Failed to check cipher suites: {e}")
-        
+            logger.error("Failed to check cipher suites: %s", e)
+
         return cipher_suites
-    
-    def _identify_vulnerabilities(self, cert_info: Dict, protocol_support: Dict, cipher_suites: List) -> List[Dict[str, Any]]:
+
+    def _identify_vulnerabilities(self, cert_info: dict, protocol_support: dict, cipher_suites: list) -> list[dict[str, Any]]:
         """Identify SSL/TLS vulnerabilities."""
         vulnerabilities = []
-        
+
         # Check for weak protocols
         for protocol in self.weak_protocols:
             if protocol_support.get(protocol, False):
@@ -681,7 +687,7 @@ class SSLSecurityChecker:
                     "description": f"Weak protocol {protocol} is supported",
                     "severity": "medium" if protocol in ["TLSv1.0", "TLSv1.1"] else "high"
                 })
-        
+
         # Check certificate issues
         if cert_info.get("is_expired"):
             vulnerabilities.append({
@@ -692,10 +698,10 @@ class SSLSecurityChecker:
         elif cert_info.get("expires_soon"):
             vulnerabilities.append({
                 "type": "expiring_certificate",
-                "description": f"SSL certificate expires in {cert_info.get('days_until_expiry')} days",
+                "description": "SSL certificate expires in {} days".format(cert_info.get('days_until_expiry')),
                 "severity": "medium"
             })
-        
+
         # Check for weak cipher suites
         for cipher in cipher_suites:
             cipher_name = cipher.get("name", "")
@@ -706,13 +712,13 @@ class SSLSecurityChecker:
                         "description": f"Weak cipher suite {cipher_name} is supported",
                         "severity": "medium"
                     })
-        
+
         return vulnerabilities
-    
-    def _calculate_security_score(self, cert_info: Dict, protocol_support: Dict, cipher_suites: List, vulnerabilities: List) -> int:
+
+    def _calculate_security_score(self, cert_info: dict, protocol_support: dict, cipher_suites: list, vulnerabilities: list) -> int:
         """Calculate overall security score (0-100)."""
         score = 100
-        
+
         # Deduct points for vulnerabilities
         for vuln in vulnerabilities:
             if vuln["severity"] == "critical":
@@ -723,80 +729,80 @@ class SSLSecurityChecker:
                 score -= 10
             elif vuln["severity"] == "low":
                 score -= 5
-        
+
         # Bonus points for strong configuration
         if protocol_support.get("TLSv1.3", False):
             score += 5
-        
+
         if not any(protocol_support.get(p, False) for p in self.weak_protocols):
             score += 10
-        
+
         return max(0, min(100, score))
 
 
 class NetworkSecurityManager:
     """Main network security management class."""
-    
+
     def __init__(self):
         self.ids = IntrusionDetectionSystem()
         self.firewall = NetworkFirewall()
         self.ssl_checker = SSLSecurityChecker()
         self.threat_intel = ThreatIntelligence()
-        
+
         # Start background tasks
         asyncio.create_task(self._background_tasks())
-    
+
     async def _background_tasks(self) -> None:
         """Run background security tasks."""
         while True:
             try:
                 # Update threat intelligence every hour
                 await self.threat_intel.update_threat_feeds()
-                
+
                 # Clean up old connection tracking data
                 await self._cleanup_old_data()
-                
+
                 # Wait 1 hour before next update
                 await asyncio.sleep(3600)
-                
+
             except Exception as e:
-                logger.error(f"Background task error: {e}")
+                logger.error("Background task error: %s", e)
                 await asyncio.sleep(300)  # Wait 5 minutes on error
-    
+
     async def _cleanup_old_data(self) -> None:
         """Clean up old tracking data to prevent memory leaks."""
         cutoff_time = time.time() - 3600  # 1 hour ago
-        
+
         for ip in list(self.ids.connection_tracking.keys()):
             # Remove old entries
-            while (self.ids.connection_tracking[ip] and 
+            while (self.ids.connection_tracking[ip] and
                    self.ids.connection_tracking[ip][0] < cutoff_time):
                 self.ids.connection_tracking[ip].popleft()
-            
+
             # Remove empty deques
             if not self.ids.connection_tracking[ip]:
                 del self.ids.connection_tracking[ip]
-    
+
     async def analyze_request(self, request: Request) -> SecurityEvent:
         """Analyze incoming request for security threats."""
         return await self.ids.analyze_request(request)
-    
+
     def check_firewall(self, source_ip: str, dest_ip: str, port: int, protocol: str = "tcp") -> str:
         """Check firewall rules for connection."""
         return self.firewall.check_connection(source_ip, dest_ip, port, protocol)
-    
-    async def check_ssl_security(self, hostname: str, port: int = 443) -> Dict[str, Any]:
+
+    async def check_ssl_security(self, hostname: str, port: int = 443) -> dict[str, Any]:
         """Check SSL/TLS security configuration."""
         return await self.ssl_checker.check_ssl_configuration(hostname, port)
-    
-    def get_security_status(self) -> Dict[str, Any]:
+
+    def get_security_status(self) -> dict[str, Any]:
         """Get overall network security status."""
         return {
             "timestamp": datetime.utcnow().isoformat(),
             "blocked_ips": len(self.ids.blocked_ips),
             "firewall_rules": len(self.firewall.rules),
             "threat_intel_last_update": (
-                self.threat_intel.last_update.isoformat() 
+                self.threat_intel.last_update.isoformat()
                 if self.threat_intel.last_update else None
             ),
             "malicious_ips_count": len(self.threat_intel.malicious_ips),

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Advanced Query Performance Tuning for pgvector and mem0ai
+"""Advanced Query Performance Tuning for pgvector and mem0ai.
+
 Production-grade query optimization and performance monitoring.
 """
 
@@ -12,9 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
 
 import asyncpg
 import numpy as np
@@ -24,6 +22,13 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Query performance tuner constants
+MINIMUM_INDEX_USAGE_THRESHOLD = 10
+LARGE_INDEX_SIZE_MB = 100
+LARGE_DATASET_THRESHOLD = 10000
+VERY_LARGE_DATASET_THRESHOLD = 100000
+LOW_EFFICIENCY_THRESHOLD = 0.3
 
 
 class QueryType(Enum):
@@ -75,7 +80,7 @@ class QueryMetrics:
     execution_time_ms: float
     planning_time_ms: float
     rows_returned: int
-    index_used: Optional[str]
+    index_used: str | None
     buffer_hits: int
     buffer_misses: int
     cpu_usage_percent: float
@@ -92,9 +97,9 @@ class IndexAnalysis:
     index_type: str
     size_mb: float
     usage_count: int
-    last_used: Optional[datetime]
+    last_used: datetime | None
     efficiency_score: float
-    recommendations: List[str]
+    recommendations: list[str]
 
 
 class PostgreSQLOptimizer:
@@ -147,9 +152,9 @@ class PostgreSQLOptimizer:
             for optimization in optimizations:
                 try:
                     await conn.execute(optimization)
-                    logger.debug(f"Applied: {optimization}")
+                    logger.debug("Applied: %s", optimization)
                 except Exception as e:
-                    logger.warning(f"Failed to apply {optimization}: {e}")
+                    logger.warning("Failed to apply %s: %s", optimization, e)
 
     async def _setup_monitoring(self):
         """Setup query monitoring and logging."""
@@ -174,10 +179,10 @@ class PostgreSQLOptimizer:
                 logger.info("Query monitoring enabled")
 
             except Exception as e:
-                logger.warning(f"Failed to setup monitoring: {e}")
+                logger.warning("Failed to setup monitoring: %s", e)
 
     async def analyze_query_performance(
-        self, query: str, params: Optional[List] = None
+        self, query: str, params: list | None = None
     ) -> QueryMetrics:
         """Analyze performance of a specific query."""
         start_time = time.time()
@@ -223,10 +228,10 @@ class PostgreSQLOptimizer:
                 )
 
             except Exception as e:
-                logger.error(f"Query analysis failed: {e}")
+                logger.error("Query analysis failed: %s", e)
                 raise
 
-    def _extract_buffer_stats(self, plan: Dict) -> Dict[str, int]:
+    def _extract_buffer_stats(self, plan: dict) -> dict[str, int]:
         """Extract buffer hit/miss statistics from explain plan."""
         stats = {"hits": 0, "misses": 0}
 
@@ -245,7 +250,7 @@ class PostgreSQLOptimizer:
         traverse_plan(plan)
         return stats
 
-    def _extract_index_usage(self, plan: Dict) -> Optional[str]:
+    def _extract_index_usage(self, plan: dict) -> str | None:
         """Extract index usage from explain plan."""
 
         def find_index(node):
@@ -282,8 +287,8 @@ class PostgreSQLOptimizer:
             return QueryType.INDEX_SCAN.value
 
     async def optimize_similarity_search(
-        self, user_id: str, embedding: List[float], top_k: int = 10
-    ) -> Dict[str, Any]:
+        self, user_id: str, embedding: list[float], top_k: int = 10
+    ) -> dict[str, Any]:
         """Optimize similarity search queries."""
         results = {}
 
@@ -345,12 +350,12 @@ class PostgreSQLOptimizer:
                 results[query_name] = asdict(metrics)
 
             except Exception as e:
-                logger.error(f"Failed to analyze {query_name}: {e}")
+                logger.error("Failed to analyze %s: %s", query_name, e)
                 results[query_name] = {"error": str(e)}
 
         return results
 
-    async def analyze_index_performance(self) -> List[IndexAnalysis]:
+    async def analyze_index_performance(self) -> list[IndexAnalysis]:
         """Analyze index usage and performance."""
         async with self.pool.acquire() as conn:
             # Get index statistics
@@ -459,7 +464,7 @@ class PostgreSQLOptimizer:
         else:
             return "Unknown"
 
-    def _calculate_index_efficiency(self, stats: Dict, size_bytes: int) -> float:
+    def _calculate_index_efficiency(self, stats: dict, size_bytes: int) -> float:
         """Calculate index efficiency score (0-1)."""
         usage_count = stats["usage_count"] or 0
         tuples_read = stats["idx_tup_read"] or 0
@@ -478,18 +483,18 @@ class PostgreSQLOptimizer:
         return min(max(efficiency, 0), 1)
 
     def _generate_index_recommendations(
-        self, stats: Dict, size_bytes: int, index_type: str
-    ) -> List[str]:
+        self, stats: dict, size_bytes: int, index_type: str
+    ) -> list[str]:
         """Generate recommendations for index optimization."""
         recommendations = []
         usage_count = stats["usage_count"] or 0
 
         if usage_count == 0:
             recommendations.append("Consider dropping this unused index")
-        elif usage_count < 10:
+        elif usage_count < MINIMUM_INDEX_USAGE_THRESHOLD:
             recommendations.append("Low usage - monitor if index is necessary")
 
-        if size_bytes > 100 * 1024 * 1024:  # 100MB
+        if size_bytes > LARGE_INDEX_SIZE_MB * 1024 * 1024:  # 100MB
             recommendations.append(
                 "Large index - consider partial indexing or compression"
             )
@@ -503,7 +508,7 @@ class PostgreSQLOptimizer:
 
         return recommendations
 
-    async def optimize_database_settings(self) -> Dict[str, Any]:
+    async def optimize_database_settings(self) -> dict[str, Any]:
         """Analyze and optimize database settings."""
         async with self.pool.acquire() as conn:
             # Get current settings
@@ -576,12 +581,12 @@ class PostgreSQLOptimizer:
 
             # Vector-specific recommendations
             memory_count = db_stats["memory_count"] or 0
-            if memory_count > 10000:
+            if memory_count > LARGE_DATASET_THRESHOLD:
                 recommendations.append(
                     "Consider using HNSW indexes for large vector datasets"
                 )
 
-            if memory_count > 100000:
+            if memory_count > VERY_LARGE_DATASET_THRESHOLD:
                 recommendations.append(
                     "Consider partitioning memories table by user_id or date"
                 )
@@ -607,10 +612,11 @@ class PostgreSQLOptimizer:
                 return (value * 8) // 1024
             else:
                 return value // 1024  # Assume kB
-        except:
+        except Exception as err:
+            logger.warning("Memory setting parsing failed: %s", err)
             return 0
 
-    async def generate_performance_report(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+    async def generate_performance_report(self, user_id: str | None = None) -> dict[str, Any]:
         """Generate comprehensive performance report."""
         report = {
             "timestamp": datetime.now().isoformat(),
@@ -643,7 +649,7 @@ class PostgreSQLOptimizer:
             )
 
         low_efficiency_indexes = [
-            idx for idx in report["index_analysis"] if idx["efficiency_score"] < 0.3
+            idx for idx in report["index_analysis"] if idx["efficiency_score"] < LOW_EFFICIENCY_THRESHOLD
         ]
         if low_efficiency_indexes:
             overall_recommendations.append(
@@ -661,13 +667,13 @@ class PostgreSQLOptimizer:
 # Example usage and CLI
 async def main():
     """Test the query performance tuner."""
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
 
     config = QueryPerformanceConfig(
         work_mem_mb=256, maintenance_work_mem_mb=512, enable_query_logging=True
     )
 
-    optimizer = PostgreSQLOptimizer(DB_URL, config)
+    optimizer = PostgreSQLOptimizer(db_url, config)
 
     try:
         await optimizer.initialize()

@@ -2317,7 +2317,6 @@ dependencies = [
     { name = "openai" },
     { name = "passlib", extra = ["bcrypt"] },
     { name = "pgvector" },
-    { name = "pickle5" },
     { name = "prometheus-client" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -2497,7 +2496,6 @@ requires-dist = [
     { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
     { name = "pdbpp", marker = "extra == 'dev'", specifier = ">=0.10.3" },
     { name = "pgvector", specifier = ">=0.2.3" },
-    { name = "pickle5", specifier = ">=0.0.12" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.6.0" },
     { name = "prometheus-client", specifier = ">=0.17.0" },
     { name = "prometheus-client", marker = "extra == 'dev'", specifier = ">=0.19.0" },
@@ -3495,12 +3493,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/44/43/9a0fb552ab4fd9806
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bf/21/b5735d5982892c878ff3d01bb06e018c43fc204428361ee9fc25a1b2125c/pgvector-0.4.1-py3-none-any.whl", hash = "sha256:34bb4e99e1b13d08a2fe82dda9f860f15ddcd0166fbb25bffe15821cbfeb7362", size = 27086, upload-time = "2025-04-26T18:56:35.956Z" },
 ]
-
-[[package]]
-name = "pickle5"
-version = "0.0.12"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9c/0b/7c9e3fce5a64cb98307f26aaae6e9986385b640dabeb24995f9d5074b0fb/pickle5-0.0.12.tar.gz", hash = "sha256:80143d4e4ea9d6cd70e841af8745dbc4d50adef5adf99e725d240bcb92e6f1e8", size = 132118, upload-time = "2021-11-20T19:15:17.802Z" }
 
 [[package]]
 name = "pillow"

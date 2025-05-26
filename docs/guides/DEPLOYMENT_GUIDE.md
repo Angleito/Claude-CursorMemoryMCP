@@ -76,7 +76,7 @@ sudo ./deploy.sh --skip-security --skip-ssl
 The deployment script will pause for configuration. Edit the `.env` file:
 
 ```bash
-nano /opt/mem0ai/.env
+nano /mem0ai/.env
 ```
 
 **Required settings:**
@@ -102,7 +102,7 @@ CORS_ORIGIN=https://yourdomain.com
 
 3. **Check all containers**
    ```bash
-   cd /opt/mem0ai
+   cd /mem0ai
    sudo -u mem0ai docker-compose ps
    ```
 
@@ -129,19 +129,19 @@ sudo apt install -y ufw fail2ban nginx-utils
 
 ```bash
 # Create mem0ai user
-sudo useradd -r -s /bin/bash -d /opt/mem0ai -m mem0ai
+sudo useradd -r -s /bin/bash -d /mem0ai -m mem0ai
 sudo usermod -aG docker mem0ai
 
 # Copy files
-sudo cp -r /opt/mem0ai-deploy/* /opt/mem0ai/
-sudo chown -R mem0ai:mem0ai /opt/mem0ai
-sudo chmod +x /opt/mem0ai/scripts/*.sh
+sudo cp -r /mem0ai-deploy/* /mem0ai/
+sudo chown -R mem0ai:mem0ai /mem0ai
+sudo chmod +x /mem0ai/scripts/*.sh
 ```
 
 ### Step 3: Generate Configuration
 
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/generate-secrets.sh
 ```
 
@@ -165,14 +165,14 @@ sudo -u mem0ai nano docker-compose.override.yml
 ### Step 5: Start Services
 
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose up -d
 ```
 
 ### Step 6: Setup SSL Certificates
 
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/ssl-setup.sh
 ```
 
@@ -184,8 +184,8 @@ sudo cp config/systemd/*.service /etc/systemd/system/
 sudo cp config/systemd/*.timer /etc/systemd/system/
 
 # Update paths in service files
-sudo sed -i "s|/opt/mem0ai|/opt/mem0ai|g" /etc/systemd/system/mem0ai*.service
-sudo sed -i "s|/opt/mem0ai|/opt/mem0ai|g" /etc/systemd/system/mem0ai*.timer
+sudo sed -i "s|/mem0ai|/mem0ai|g" /etc/systemd/system/mem0ai*.service
+sudo sed -i "s|/mem0ai|/mem0ai|g" /etc/systemd/system/mem0ai*.timer
 
 # Enable services
 sudo systemctl daemon-reload
@@ -198,7 +198,7 @@ sudo systemctl start mem0ai-backup.timer
 ### Step 8: Security Hardening
 
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo ./scripts/security-hardening.sh
 ```
 
@@ -211,7 +211,7 @@ sudo ./scripts/security-hardening.sh
 sudo systemctl status mem0ai.service
 
 # Check Docker containers
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose ps
 
 # Check application health
@@ -257,7 +257,7 @@ sudo fail2ban-client status
 
 ```bash
 # Run manual backup test
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/backup.sh
 
 # List backups
@@ -278,7 +278,7 @@ sudo -u mem0ai ./scripts/test-ssl-renewal.sh
 **Solution:**
 ```bash
 # Check container logs
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose logs
 
 # Check resource usage
@@ -305,7 +305,7 @@ nano .env
 # Set SSL_STAGING=true
 
 # Re-run SSL setup
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/ssl-setup.sh
 ```
 
@@ -318,7 +318,7 @@ sudo -u mem0ai ./scripts/ssl-setup.sh
 **Solution:**
 ```bash
 # Check database containers
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose exec postgres pg_isready
 sudo -u mem0ai docker-compose exec redis redis-cli ping
 sudo -u mem0ai docker-compose exec qdrant curl http://localhost:6333/health
@@ -340,7 +340,7 @@ htop
 sudo -u mem0ai docker stats
 
 # Optimize for smaller VPS
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai nano docker-compose.override.yml
 # Uncomment small VPS configuration
 
@@ -360,14 +360,14 @@ sudo -u mem0ai docker-compose up -d
 sudo journalctl -u mem0ai-backup.service -n 50
 
 # Test backup manually
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/backup.sh
 
 # Check disk space
 df -h
 
 # Check permissions
-ls -la /opt/mem0ai/backups/
+ls -la /mem0ai/backups/
 ```
 
 ## 🔄 Maintenance Procedures
@@ -390,7 +390,7 @@ df -h
 sudo apt update && sudo apt upgrade -y
 
 # Update Docker images
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose pull
 sudo -u mem0ai docker-compose up -d
 
@@ -410,7 +410,7 @@ sudo /usr/local/bin/security-audit.sh
 sudo -u mem0ai ./scripts/restore.sh --list
 
 # Clean up old backups and Docker images
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker system prune -f
 
 # Review and optimize resource usage
@@ -479,11 +479,11 @@ sudo -u mem0ai docker stats
 
 | Component | Location |
 |-----------|----------|
-| Application | `/opt/mem0ai/` |
-| Configuration | `/opt/mem0ai/config/` |
-| Logs | `/opt/mem0ai/logs/` |
-| Backups | `/opt/mem0ai/backups/` |
-| SSL Certificates | `/opt/mem0ai/ssl/` |
+| Application | `/mem0ai/` |
+| Configuration | `/mem0ai/config/` |
+| Logs | `/mem0ai/logs/` |
+| Backups | `/mem0ai/backups/` |
+| SSL Certificates | `/mem0ai/ssl/` |
 | systemd Services | `/etc/systemd/system/mem0ai*` |
 
 ## 🆘 Emergency Procedures
@@ -491,7 +491,7 @@ sudo -u mem0ai docker stats
 ### Complete Service Restart
 ```bash
 sudo systemctl stop mem0ai.service
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose down
 sudo -u mem0ai docker-compose up -d
 sudo systemctl start mem0ai.service
@@ -499,7 +499,7 @@ sudo systemctl start mem0ai.service
 
 ### Emergency Backup
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/backup.sh
 ```
 
@@ -509,7 +509,7 @@ sudo -u mem0ai ./scripts/backup.sh
 sudo systemctl stop mem0ai.service
 
 # Restore from backup
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai ./scripts/restore.sh --file backup_name
 
 # Start services
@@ -518,7 +518,7 @@ sudo systemctl start mem0ai.service
 
 ### SSL Certificate Emergency Renewal
 ```bash
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose run --rm certbot renew --force-renewal
 sudo -u mem0ai docker-compose exec nginx nginx -s reload
 ```

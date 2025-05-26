@@ -3,10 +3,6 @@
 import re
 from enum import Enum
 from functools import wraps
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Set
 
 from fastapi import HTTPException
 from fastapi import status
@@ -70,7 +66,7 @@ class RBACManager:
     def __init__(self):
         self.role_permissions = ROLE_PERMISSIONS
 
-    def get_user_permissions(self, user: User) -> Set[str]:
+    def get_user_permissions(self, user: User) -> set[str]:
         """Get all permissions for a user."""
         base_permissions = set(self.role_permissions.get(user.role.value, []))
 
@@ -84,12 +80,12 @@ class RBACManager:
         user_permissions = self.get_user_permissions(user)
         return permission in user_permissions
 
-    def has_any_permission(self, user: User, permissions: List[str]) -> bool:
+    def has_any_permission(self, user: User, permissions: list[str]) -> bool:
         """Check if user has any of the specified permissions."""
         user_permissions = self.get_user_permissions(user)
         return any(perm in user_permissions for perm in permissions)
 
-    def has_all_permissions(self, user: User, permissions: List[str]) -> bool:
+    def has_all_permissions(self, user: User, permissions: list[str]) -> bool:
         """Check if user has all of the specified permissions."""
         user_permissions = self.get_user_permissions(user)
         return all(perm in user_permissions for perm in permissions)
@@ -99,7 +95,7 @@ class RBACManager:
         user: User,
         resource: str,
         action: str,
-        resource_owner_id: Optional[str] = None,
+        resource_owner_id: str | None = None,
     ) -> bool:
         """Check if user can perform action on resource."""
         permission = f"{resource}:{action}"
@@ -107,19 +103,15 @@ class RBACManager:
         # Check basic permission
         if not self.has_permission(user, permission):
             # Check if user owns the resource (for profile, own memories, etc.)
-            if resource_owner_id and str(user.id) == resource_owner_id:
-                # Users can read/write their own profile and memories
-                if resource in ["profile", "memory"] and action in ["read", "write"]:
-                    return True
-            return False
+            return bool(resource_owner_id and str(user.id) == resource_owner_id and resource in ["profile", "memory"] and action in ["read", "write"])
 
         return True
 
-    def filter_permissions_by_role(self, role: UserRole) -> List[str]:
+    def filter_permissions_by_role(self, role: UserRole) -> list[str]:
         """Get permissions for a specific role."""
         return self.role_permissions.get(role.value, [])
 
-    def get_resource_permissions(self, user: User, resource: str) -> List[str]:
+    def get_resource_permissions(self, user: User, resource: str) -> list[str]:
         """Get all permissions for a resource that the user has."""
         user_permissions = self.get_user_permissions(user)
         resource_permissions = [
@@ -132,7 +124,7 @@ class RBACManager:
         pattern = r"^[a-z_]+:[a-z_]+$"
         return bool(re.match(pattern, permission))
 
-    def get_hierarchical_permissions(self, user: User) -> Dict[str, List[str]]:
+    def get_hierarchical_permissions(self, user: User) -> dict[str, list[str]]:
         """Get permissions organized by resource."""
         user_permissions = self.get_user_permissions(user)
         hierarchical = {}
@@ -179,7 +171,7 @@ def require_permission(permission: str):
     return decorator
 
 
-def require_any_permission(permissions: List[str]):
+def require_any_permission(permissions: list[str]):
     """Decorator to require any of the specified permissions."""
 
     def decorator(func):
@@ -205,7 +197,7 @@ def require_any_permission(permissions: List[str]):
     return decorator
 
 
-def require_role(roles: List[UserRole]):
+def require_role(roles: list[UserRole]):
     """Decorator to require specific roles."""
 
     def decorator(func):
@@ -231,7 +223,7 @@ def require_role(roles: List[UserRole]):
     return decorator
 
 
-def require_resource_access(resource: str, action: str, owner_id_param: Optional[str] = None):
+def require_resource_access(resource: str, action: str, owner_id_param: str | None = None):
     """Decorator to require access to a specific resource."""
 
     def decorator(func):

@@ -2,8 +2,6 @@
 
 import secrets
 from functools import lru_cache
-from typing import List
-from typing import Optional
 
 from pydantic import BaseSettings
 from pydantic import validator
@@ -30,20 +28,23 @@ class SecuritySettings(BaseSettings):
     rate_limit_storage: str = "redis"
 
     # Encryption
-    encryption_key: Optional[str] = None
+    encryption_key: str | None = None
     encryption_algorithm: str = "AES-256-GCM"
 
     # Security Headers
-    cors_origins: List[str] = ["http://localhost:3000"]
-    trusted_hosts: List[str] = ["localhost"]
+    cors_origins: list[str] = ["http://localhost:3000"]
+    trusted_hosts: list[str] = ["localhost"]
 
     @validator("encryption_key", pre=True, always=True)
     def generate_encryption_key(self, v):
+        """Generate encryption key if not provided."""
         if not v:
             return secrets.token_urlsafe(32)
         return v
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_prefix = ""
         case_sensitive = False
 
@@ -61,9 +62,11 @@ class DatabaseSettings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
-    redis_password: Optional[str] = None
+    redis_password: str | None = None
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_prefix = ""
         case_sensitive = False
 
@@ -71,15 +74,17 @@ class DatabaseSettings(BaseSettings):
 class ServerSettings(BaseSettings):
     """Server configuration."""
 
-    server_host: str = "0.0.0.0"
+    server_host: str = "127.0.0.1"  # Changed from 0.0.0.0 to localhost for security
     server_port: int = 8000
     workers: int = 4
 
     # SSL/TLS
-    ssl_cert_path: Optional[str] = None
-    ssl_key_path: Optional[str] = None
+    ssl_cert_path: str | None = None
+    ssl_key_path: str | None = None
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_prefix = ""
         case_sensitive = False
 
@@ -87,11 +92,13 @@ class ServerSettings(BaseSettings):
 class MonitoringSettings(BaseSettings):
     """Monitoring and logging configuration."""
 
-    sentry_dsn: Optional[str] = None
+    sentry_dsn: str | None = None
     log_level: str = "INFO"
     prometheus_port: int = 8080
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_prefix = ""
         case_sensitive = False
 
@@ -104,6 +111,8 @@ class ComplianceSettings(BaseSettings):
     audit_log_retention_days: int = 2555  # 7 years
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_prefix = ""
         case_sensitive = False
 
@@ -124,9 +133,12 @@ class Settings(BaseSettings):
 
     @validator("debug", pre=True, always=True)
     def set_debug(self, v, values):
+        """Set debug mode based on environment."""
         return values.get("environment", "development") == "development"
 
     class Config:
+        """Pydantic configuration settings."""
+
         env_file = ".env"
         env_nested_delimiter = "__"
         case_sensitive = False

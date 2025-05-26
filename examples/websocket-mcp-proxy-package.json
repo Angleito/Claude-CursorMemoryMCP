@@ -1,0 +1,27 @@
+{
+  "name": "mem0ai-mcp-proxy",
+  "version": "1.0.0",
+  "description": "WebSocket proxy for connecting Claude Code to remote Mem0 AI MCP Server",
+  "main": "websocket-mcp-proxy.js",
+  "scripts": {
+    "start": "node websocket-mcp-proxy.js",
+    "dev": "NODE_ENV=development node websocket-mcp-proxy.js"
+  },
+  "keywords": [
+    "mcp",
+    "claude",
+    "websocket",
+    "proxy"
+  ],
+  "author": "Mem0 AI Team",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

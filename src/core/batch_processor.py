@@ -1,28 +1,41 @@
 #!/usr/bin/env python3
-"""High-Performance Batch Processing System for Large Memory Sets
+"""High-Performance Batch Processing System for Large Memory Sets.
+
 Production-grade batch processing with parallel execution and optimized I/O.
 """
 
 import asyncio
 import contextlib
+import json
 import logging
 import multiprocessing as mp
 import os
-import pickle
 import queue
 import signal
+import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
+from dataclasses import asdict
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import asyncpg
 import numpy as np
 import psutil
+
+# Batch processing constants
+SINGLE_WORKER_COUNT = 1
+NO_FAILED_ITEMS = 0
+MIN_PROCESSED_ITEMS = 0
+MIN_PROCESSING_TIME = 0
+CHECKPOINT_MODULO = 0
 
 # Configure logging
 logging.basicConfig(
@@ -63,14 +76,14 @@ class BatchConfig:
     max_workers: int = None  # Auto-detect based on CPU count
     chunk_size: int = 100  # Size for parallel processing chunks
     max_memory_mb: int = 2048  # Maximum memory usage
-    temp_dir: str = "/tmp/mem0ai_batch"
+    temp_dir: str = tempfile.gettempdir() + "/mem0ai_batch"
     enable_compression: bool = True
     enable_checkpointing: bool = True
     checkpoint_interval: int = 10000  # Items processed
     retry_attempts: int = 3
     retry_delay: float = 1.0
-    progress_callback: Optional[Callable] = None
-    error_callback: Optional[Callable] = None
+    progress_callback: Callable | None = None
+    error_callback: Callable | None = None
 
 
 @dataclass
@@ -79,11 +92,11 @@ class BatchItem:
 
     id: str
     operation: BatchOperation
-    data: Dict[str, Any]
+    data: dict[str, Any]
     priority: int = 1
     retry_count: int = 0
-    user_id: Optional[str] = None
-    metadata: Optional[Dict] = None
+    user_id: str | None = None
+    metadata: dict | None = None
 
 
 @dataclass
@@ -92,19 +105,20 @@ class BatchJob:
 
     job_id: str
     operation: BatchOperation
-    items: List[BatchItem]
+    items: list[BatchItem]
     config: BatchConfig
     status: BatchStatus = BatchStatus.PENDING
     created_at: datetime = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     progress: float = 0.0
     processed_count: int = 0
     failed_count: int = 0
-    error_log: List[str] = None
-    result_data: Optional[Dict] = None
+    error_log: list[str] = None
+    result_data: dict | None = None
 
     def __post_init__(self):
+        """Initialize default values after dataclass creation."""
         if self.created_at is None:
             self.created_at = datetime.now()
         if self.error_log is None:
@@ -123,14 +137,20 @@ class BatchResult:
     processing_time_seconds: float
     throughput_items_per_second: float
     memory_usage_mb: float
-    error_summary: List[str]
-    checkpoint_files: List[str]
+    error_summary: list[str]
+    checkpoint_files: list[str]
 
 
 class ProgressTracker:
     """Thread-safe progress tracking."""
 
-    def __init__(self, total_items: int, callback: Optional[Callable] = None):
+    def __init__(self, total_items: int, callback: Callable | None = None):
+        """Initialize progress tracker.
+
+        Args:
+            total_items: Total number of items to process.
+            callback: Optional callback function for progress updates.
+        """
         self.total_items = total_items
         self.processed_items = 0
         self.failed_items = 0
@@ -147,7 +167,7 @@ class ProgressTracker:
                 progress = (self.processed_items + self.failed_items) / self.total_items
                 self.callback(progress, self.processed_items, self.failed_items)
 
-    def get_progress(self) -> Tuple[float, int, int]:
+    def get_progress(self) -> tuple[float, int, int]:
         """Get current progress."""
         with self.lock:
             progress = (self.processed_items + self.failed_items) / self.total_items
@@ -158,13 +178,19 @@ class CheckpointManager:
     """Manages checkpointing for batch operations."""
 
     def __init__(self, job_id: str, temp_dir: str):
+        """Initialize checkpoint manager.
+
+        Args:
+            job_id: Unique identifier for the batch job.
+            temp_dir: Directory path for storing checkpoint files.
+        """
         self.job_id = job_id
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoint_files = []
 
     def save_checkpoint(
-        self, chunk_id: int, processed_items: List[Dict], failed_items: List[Dict]
+        self, chunk_id: int, processed_items: list[dict], failed_items: list[dict]
     ) -> str:
         """Save checkpoint data."""
         checkpoint_data = {
@@ -174,19 +200,19 @@ class CheckpointManager:
             "timestamp": datetime.now().isoformat(),
         }
 
-        filename = f"checkpoint_{self.job_id}_{chunk_id}.pkl"
+        filename = f"checkpoint_{self.job_id}_{chunk_id}.json"
         filepath = self.temp_dir / filename
 
-        with open(filepath, "wb") as f:
-            pickle.dump(checkpoint_data, f)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(checkpoint_data, f, default=str)
 
         self.checkpoint_files.append(str(filepath))
         return str(filepath)
 
-    def load_checkpoint(self, filepath: str) -> Dict:
+    def load_checkpoint(self, filepath: str) -> dict:
         """Load checkpoint data."""
-        with open(filepath, "rb") as f:
-            return pickle.load(f)
+        with open(filepath, encoding="utf-8") as f:
+            return json.load(f)
 
     def cleanup(self):
         """Remove all checkpoint files."""
@@ -203,6 +229,11 @@ class MemoryMonitor:
     """Monitors memory usage during batch processing."""
 
     def __init__(self, max_memory_mb: int):
+        """Initialize memory monitor.
+
+        Args:
+            max_memory_mb: Maximum memory usage limit in megabytes.
+        """
         self.max_memory_mb = max_memory_mb
         self.process = psutil.Process()
 
@@ -229,6 +260,11 @@ class DatabaseBatchProcessor:
     """Optimized database batch operations."""
 
     def __init__(self, db_url: str):
+        """Initialize database batch processor.
+
+        Args:
+            db_url: Database connection URL.
+        """
         self.db_url = db_url
         self.pool = None
 
@@ -243,12 +279,34 @@ class DatabaseBatchProcessor:
         if self.pool:
             await self.pool.close()
 
+    async def _process_individual_inserts(
+        self, conn, query: str, chunk, chunk_items
+    ) -> tuple[list[str], list[str]]:
+        """Process items individually to identify failures."""
+        success_ids = []
+        failed_ids = []
+
+        for _j, (data_row, item) in enumerate(zip(chunk, chunk_items, strict=False)):
+            try:
+                result = await conn.fetchrow(query, *data_row)
+                if result:
+                    success_ids.append(str(result["id"]))
+                else:
+                    failed_ids.append(item.id)
+            except Exception as item_error:
+                logger.error(
+                    f"Individual insert failed for item {item.id}: {item_error}"
+                )
+                failed_ids.append(item.id)
+
+        return success_ids, failed_ids
+
     async def batch_insert_memories(
-        self, items: List[BatchItem]
-    ) -> Tuple[List[str], List[str]]:
+        self, items: list[BatchItem]
+    ) -> tuple[list[str], list[str]]:
         """Batch insert memory records."""
-        success_ids: List[str] = []
-        failed_ids: List[str] = []
+        success_ids: list[str] = []
+        failed_ids: list[str] = []
 
         # Prepare batch data with proper type conversion
         batch_data = []
@@ -258,7 +316,7 @@ class DatabaseBatchProcessor:
             # Convert numpy array to list if needed
             if isinstance(embedding, np.ndarray):
                 embedding = embedding.tolist()
-            
+
             batch_data.append(
                 (
                     data.get("user_id"),
@@ -288,38 +346,31 @@ class DatabaseBatchProcessor:
 
                     try:
                         async with conn.transaction():
-                            results = await conn.fetch(query, *zip(*chunk))
-                            for _j, result in enumerate(results):
+                            results = await conn.fetch(query, *zip(*chunk, strict=False))
+                            for _, result in enumerate(results):
                                 success_ids.append(str(result["id"]))
 
                     except Exception as e:
-                        logger.error(f"Batch insert chunk failed: {e}")
+                        logger.error("Batch insert chunk failed: %s", e)
                         # Process items individually to identify failures
-                        for j, (data_row, item) in enumerate(zip(chunk, chunk_items)):
-                            try:
-                                result = await conn.fetchrow(query, *data_row)
-                                if result:
-                                    success_ids.append(str(result["id"]))
-                                else:
-                                    failed_ids.append(item.id)
-                            except Exception as item_error:
-                                logger.error(
-                                    f"Individual insert failed for item {item.id}: {item_error}"
-                                )
-                                failed_ids.append(item.id)
+                        chunk_success, chunk_failed = await self._process_individual_inserts(
+                            conn, query, chunk, chunk_items
+                        )
+                        success_ids.extend(chunk_success)
+                        failed_ids.extend(chunk_failed)
 
             except Exception as e:
-                logger.error(f"Batch insert failed: {e}")
+                logger.error("Batch insert failed: %s", e)
                 failed_ids.extend([item.id for item in items])
 
         return success_ids, failed_ids
 
     async def batch_update_embeddings(
-        self, items: List[BatchItem]
-    ) -> Tuple[List[str], List[str]]:
+        self, items: list[BatchItem]
+    ) -> tuple[list[str], list[str]]:
         """Batch update embeddings."""
-        success_ids: List[str] = []
-        failed_ids: List[str] = []
+        success_ids: list[str] = []
+        failed_ids: list[str] = []
 
         async with self.pool.acquire() as conn:
             try:
@@ -353,14 +404,14 @@ class DatabaseBatchProcessor:
                         failed_ids.append(item.id)
 
             except Exception as e:
-                logger.error(f"Batch update failed: {e}")
+                logger.error("Batch update failed: %s", e)
                 failed_ids.extend([item.id for item in items])
 
         return success_ids, failed_ids
 
-    async def batch_search_similar(self, items: List[BatchItem]) -> List[Dict[str, Any]]:
+    async def batch_search_similar(self, items: list[BatchItem]) -> list[dict[str, Any]]:
         """Batch similarity search."""
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         async with self.pool.acquire() as conn:
             for item in items:
@@ -370,7 +421,7 @@ class DatabaseBatchProcessor:
                     # Convert numpy array to list if needed
                     if isinstance(query_embedding, np.ndarray):
                         query_embedding = query_embedding.tolist()
-                    
+
                     user_id = data.get("user_id")
                     top_k = data.get("top_k", 10)
                     threshold = data.get("similarity_threshold", 0.7)
@@ -395,7 +446,7 @@ class DatabaseBatchProcessor:
                         top_k,
                     )
 
-                    item_results: List[Dict[str, Any]] = []
+                    item_results: list[dict[str, Any]] = []
                     for row in search_results:
                         item_results.append(
                             {
@@ -411,7 +462,7 @@ class DatabaseBatchProcessor:
                     )
 
                 except Exception as e:
-                    logger.error(f"Search failed for item {item.id}: {e}")
+                    logger.error("Search failed for item {item.id}: %s", e)
                     results.append(
                         {
                             "item_id": item.id,
@@ -428,6 +479,11 @@ class BatchProcessor:
     """Main batch processing engine."""
 
     def __init__(self, db_url: str):
+        """Initialize batch processor.
+
+        Args:
+            db_url: Database connection URL.
+        """
         self.db_url = db_url
         self.db_processor = DatabaseBatchProcessor(db_url)
         self.active_jobs = {}
@@ -451,7 +507,7 @@ class BatchProcessor:
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals."""
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+        logger.info("Received signal %s, initiating graceful shutdown...", signum)
         self.shutdown_event.set()
 
     def submit_job(self, job: BatchJob) -> str:
@@ -471,7 +527,7 @@ class BatchProcessor:
 
         self.active_jobs[job.job_id] = job
 
-        logger.info(f"Submitted batch job {job.job_id} with {len(job.items)} items")
+        logger.info("Submitted batch job {job.job_id} with %s items", len(job.items))
         return job.job_id
 
     async def process_job(self, job: BatchJob) -> BatchResult:
@@ -494,40 +550,10 @@ class BatchProcessor:
             chunks = self._create_chunks(job.items, job.config.chunk_size)
 
             # Process chunks
-            if job.config.max_workers == 1:
-                # Sequential processing
-                for chunk_id, chunk in enumerate(chunks):
-                    if self.shutdown_event.is_set():
-                        job.status = BatchStatus.CANCELLED
-                        break
-
-                    chunk_result = await self._process_chunk(
-                        chunk, job.operation, chunk_id, job.config
-                    )
-
-                    processed_items += chunk_result["processed"]
-                    failed_items += chunk_result["failed"]
-                    error_log.extend(chunk_result["errors"])
-
-                    progress_tracker.update(
-                        chunk_result["processed"], chunk_result["failed"]
-                    )
-
-                    # Checkpoint if enabled
-                    if (
-                        job.config.enable_checkpointing
-                        and processed_items % job.config.checkpoint_interval == 0
-                    ):
-                        checkpoint_manager.save_checkpoint(
-                            chunk_id,
-                            chunk_result["processed_data"],
-                            chunk_result["failed_data"],
-                        )
-
-                    # Check memory usage
-                    if memory_monitor.check_memory_limit():
-                        logger.warning("Memory limit exceeded, waiting...")
-                        memory_monitor.wait_for_memory()
+            if job.config.max_workers == SINGLE_WORKER_COUNT:
+                processed_items, failed_items, error_log = await self._process_sequential(
+                    chunks, job, progress_tracker, memory_monitor, checkpoint_manager
+                )
             else:
                 # Parallel processing
                 processed_items, failed_items, error_log = await self._process_parallel(
@@ -539,18 +565,11 @@ class BatchProcessor:
                     checkpoint_manager,
                 )
 
-            # Determine final status
-            if self.shutdown_event.is_set():
-                job.status = BatchStatus.CANCELLED
-            elif failed_items == 0:
-                job.status = BatchStatus.COMPLETED
-            elif processed_items > 0:
-                job.status = BatchStatus.COMPLETED  # Partial success
-            else:
-                job.status = BatchStatus.FAILED
+                # Determine final status
+            job.status = self._determine_job_status(processed_items, failed_items)
 
         except Exception as e:
-            logger.error(f"Job {job.job_id} failed: {e}")
+            logger.error("Job {job.job_id} failed: %s", e)
             job.status = BatchStatus.FAILED
             error_log.append(str(e))
             failed_items = len(job.items) - processed_items
@@ -568,7 +587,7 @@ class BatchProcessor:
                 failed_items=failed_items,
                 processing_time_seconds=processing_time,
                 throughput_items_per_second=(
-                    processed_items / processing_time if processing_time > 0 else 0
+                    processed_items / processing_time if processing_time > MIN_PROCESSING_TIME else MIN_PROCESSING_TIME
                 ),
                 memory_usage_mb=memory_monitor.get_memory_usage_mb(),
                 error_summary=error_log[:100],  # Limit error log size
@@ -576,10 +595,7 @@ class BatchProcessor:
             )
 
             # Cleanup if successful
-            if (
-                job.status == BatchStatus.COMPLETED
-                and not job.config.enable_checkpointing
-            ):
+            if job.status == BatchStatus.COMPLETED and not job.config.enable_checkpointing:
                 checkpoint_manager.cleanup()
 
             # Update job
@@ -594,24 +610,83 @@ class BatchProcessor:
                 f"{failed_items} failed in {processing_time:.2f}s"
             )
 
-            return result
+        return result
 
     def _create_chunks(
-        self, items: List[BatchItem], chunk_size: int
-    ) -> List[List[BatchItem]]:
+        self, items: list[BatchItem], chunk_size: int
+    ) -> list[list[BatchItem]]:
         """Split items into processing chunks."""
         chunks = []
         for i in range(0, len(items), chunk_size):
             chunks.append(items[i : i + chunk_size])
         return chunks
 
+    async def _process_sequential(
+        self,
+        chunks: list[list[BatchItem]],
+        job: BatchJob,
+        progress_tracker: ProgressTracker,
+        memory_monitor: MemoryMonitor,
+        checkpoint_manager: CheckpointManager,
+    ) -> tuple[int, int, list[str]]:
+        """Process chunks sequentially."""
+        processed_items = 0
+        failed_items = 0
+        error_log = []
+
+        for chunk_id, chunk in enumerate(chunks):
+            if self.shutdown_event.is_set():
+                job.status = BatchStatus.CANCELLED
+                break
+
+            chunk_result = await self._process_chunk(
+                chunk, job.operation, chunk_id, job.config
+            )
+
+            processed_items += chunk_result["processed"]
+            failed_items += chunk_result["failed"]
+            error_log.extend(chunk_result["errors"])
+
+            progress_tracker.update(
+                chunk_result["processed"], chunk_result["failed"]
+            )
+
+            # Checkpoint if enabled
+            if (
+                job.config.enable_checkpointing
+                and processed_items % job.config.checkpoint_interval == CHECKPOINT_MODULO
+            ):
+                checkpoint_manager.save_checkpoint(
+                    chunk_id,
+                    chunk_result["processed_data"],
+                    chunk_result["failed_data"],
+                )
+
+            # Check memory usage
+            if memory_monitor.check_memory_limit():
+                logger.warning("Memory limit exceeded, waiting...")
+                memory_monitor.wait_for_memory()
+
+        return processed_items, failed_items, error_log
+
+    def _determine_job_status(self, processed_items: int, failed_items: int) -> BatchStatus:
+        """Determine final job status based on results."""
+        if self.shutdown_event.is_set():
+            return BatchStatus.CANCELLED
+        elif failed_items == NO_FAILED_ITEMS:
+            return BatchStatus.COMPLETED
+        elif processed_items > MIN_PROCESSED_ITEMS:
+            return BatchStatus.COMPLETED  # Partial success
+        else:
+            return BatchStatus.FAILED
+
     async def _process_chunk(
         self,
-        chunk: List[BatchItem],
+        chunk: list[BatchItem],
         operation: BatchOperation,
         chunk_id: int,
         config: BatchConfig,
-    ) -> Dict:
+    ) -> dict:
         """Process a single chunk of items."""
         processed_data = []
         failed_data = []
@@ -656,7 +731,7 @@ class BatchProcessor:
                 raise ValueError(f"Unsupported operation: {operation}")
 
         except Exception as e:
-            logger.error(f"Chunk {chunk_id} processing failed: {e}")
+            logger.error("Chunk {chunk_id} processing failed: %s", e)
             failed_data.extend([asdict(item) for item in chunk])
             errors.append(f"Chunk processing error: {e!s}")
 
@@ -670,13 +745,13 @@ class BatchProcessor:
 
     async def _process_parallel(
         self,
-        chunks: List[List[BatchItem]],
+        chunks: list[list[BatchItem]],
         operation: BatchOperation,
         config: BatchConfig,
         progress_tracker: ProgressTracker,
         memory_monitor: MemoryMonitor,
         checkpoint_manager: CheckpointManager,
-    ) -> Tuple[int, int, List[str]]:
+    ) -> tuple[int, int, list[str]]:
         """Process chunks in parallel."""
         total_processed = 0
         total_failed = 0
@@ -713,7 +788,7 @@ class BatchProcessor:
                     # Checkpoint if enabled
                     if (
                         config.enable_checkpointing
-                        and total_processed % config.checkpoint_interval == 0
+                        and total_processed % config.checkpoint_interval == CHECKPOINT_MODULO
                     ):
                         checkpoint_manager.save_checkpoint(
                             chunk_id, result["processed_data"], result["failed_data"]
@@ -727,13 +802,13 @@ class BatchProcessor:
                         memory_monitor.wait_for_memory()
 
                 except Exception as e:
-                    logger.error(f"Parallel chunk processing failed: {e}")
+                    logger.error("Parallel chunk processing failed: %s", e)
                     total_failed += len(chunk)
                     all_errors.append(f"Parallel processing error: {e!s}")
 
         return total_processed, total_failed, all_errors
 
-    async def get_job_status(self, job_id: str) -> Optional[BatchJob]:
+    async def get_job_status(self, job_id: str) -> BatchJob | None:
         """Get status of a batch job."""
         return self.active_jobs.get(job_id)
 
@@ -746,8 +821,8 @@ class BatchProcessor:
         return False
 
     async def list_jobs(
-        self, status_filter: Optional[BatchStatus] = None
-    ) -> List[BatchJob]:
+        self, status_filter: BatchStatus | None = None
+    ) -> list[BatchJob]:
         """List all jobs, optionally filtered by status."""
         jobs = list(self.active_jobs.values())
         if status_filter:
@@ -771,7 +846,7 @@ class BatchProcessor:
         for job_id in jobs_to_remove:
             del self.active_jobs[job_id]
 
-        logger.info(f"Cleaned up {len(jobs_to_remove)} old jobs")
+        logger.info("Cleaned up %s old jobs", len(jobs_to_remove))
 
 
 # Example usage
@@ -779,9 +854,12 @@ async def main():
     """Test the batch processor."""
     import uuid
 
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error("DATABASE_URL environment variable is required")
+        return
 
-    processor = BatchProcessor(DB_URL)
+    processor = BatchProcessor(db_url)
 
     try:
         await processor.initialize()
@@ -809,8 +887,11 @@ async def main():
             max_workers=4,
             chunk_size=25,
             enable_checkpointing=True,
-            progress_callback=lambda p, proc, fail: print(
-                f"Progress: {p:.1%} ({proc} processed, {fail} failed)"
+            progress_callback=lambda p, proc, fail: logger.info(
+                "Progress",
+                percentage=f"{p:.1%}",
+                processed=proc,
+                failed=fail
             ),
         )
 
@@ -826,13 +907,13 @@ async def main():
 
         # Process the job
         result = await processor.process_job(job)
-        logger.info(f"Batch job result: {result.status}, {result.processed_items} processed, {result.failed_items} failed")
-        logger.info(f"Job completed: {result.status}, processed: {result.processed_items}, failed: {result.failed_items}")
+        logger.info("Batch job result: {result.status}, {result.processed_items} processed, %s failed", result.failed_items)
+        logger.info("Job completed: {result.status}, processed: {result.processed_items}, failed: %s", result.failed_items)
 
 
         if result.error_summary:
             for error in result.error_summary[:5]:
-                logger.error(f"Processing error: {error}")
+                logger.error("Processing error: %s", error)
 
     finally:
         await processor.cleanup()

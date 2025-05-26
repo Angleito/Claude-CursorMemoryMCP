@@ -14,10 +14,18 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel
+from pydantic import Field
+from pydantic import field_validator
+from pydantic import model_validator
 
+# Constants for validation limits
+MAX_TAGS = 50  # Maximum number of tags allowed
+MAX_TAG_LENGTH = 100  # Maximum length of a single tag
+MIN_PASSWORD_LENGTH = 8  # Minimum password length
+MAX_RESPONSE_TIME_SECONDS = 60  # Maximum reasonable response time
 
 class MemoryType(str, Enum):
     """Memory classification types."""
@@ -45,21 +53,21 @@ class MemoryCreate(BaseModel):
     content: str = Field(
         ..., description="Memory content", min_length=1, max_length=100000
     )
-    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
-    tags: Optional[List[str]] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = Field(default_factory=dict)
+    tags: list[str] | None = Field(default_factory=list)
     memory_type: MemoryType = Field(MemoryType.FACT)
     priority: MemoryPriority = Field(MemoryPriority.MEDIUM)
-    source: Optional[str] = Field(
+    source: str | None = Field(
         None, description="Source of the memory", max_length=1000
     )
-    context: Optional[str] = Field(
+    context: str | None = Field(
         None, description="Additional context", max_length=10000
     )
-    expires_at: Optional[datetime] = Field(None)
+    expires_at: datetime | None = Field(None)
 
     @field_validator("metadata")
     @classmethod
-    def validate_metadata(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def validate_metadata(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
         """Validate metadata is a JSON-serializable dictionary."""
         if v is not None:
             if not isinstance(v, dict):
@@ -68,28 +76,28 @@ class MemoryCreate(BaseModel):
             try:
                 json.dumps(v)
             except (TypeError, ValueError) as e:
-                raise ValueError(f"Metadata must be JSON serializable: {e}")
+                raise ValueError(f"Metadata must be JSON serializable: {e}") from e
         return v
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
         """Validate tags are a list of non-empty strings."""
         if v is not None:
             if not isinstance(v, list):
                 raise ValueError("Tags must be a list")
-            if len(v) > 50:  # Limit number of tags
-                raise ValueError("Cannot have more than 50 tags")
+            if len(v) > MAX_TAGS:  # Limit number of tags
+                raise ValueError(f"Cannot have more than {MAX_TAGS} tags")
             for tag in v:
                 if not isinstance(tag, str) or not tag.strip():
                     raise ValueError("All tags must be non-empty strings")
-                if len(tag) > 100:
-                    raise ValueError("Tag length cannot exceed 100 characters")
+                if len(tag) > MAX_TAG_LENGTH:
+                    raise ValueError(f"Tag length cannot exceed {MAX_TAG_LENGTH} characters")
         return v
 
     @field_validator("expires_at")
     @classmethod
-    def validate_expires_at(cls, v: Optional[datetime]) -> Optional[datetime]:
+    def validate_expires_at(cls, v: datetime | None) -> datetime | None:
         """Validate expiration date is in the future."""
         if v is not None and v <= datetime.now():
             raise ValueError("Expiration date must be in the future")
@@ -101,28 +109,28 @@ class MemoryResponse(BaseModel):
 
     id: str = Field(..., min_length=1)
     content: str = Field(..., min_length=1)
-    embedding: Optional[List[float]] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    tags: List[str] = Field(default_factory=list)
+    embedding: list[float] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
     memory_type: MemoryType
     priority: MemoryPriority
-    source: Optional[str] = None
-    context: Optional[str] = None
+    source: str | None = None
+    context: str | None = None
     user_id: str = Field(..., min_length=1)
     created_at: datetime
     updated_at: datetime
-    expires_at: Optional[datetime] = None
+    expires_at: datetime | None = None
     access_count: int = Field(0, ge=0)
-    similarity_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    similarity_score: float | None = Field(None, ge=0.0, le=1.0)
 
     @field_validator("embedding")
     @classmethod
-    def validate_embedding(cls, v: Optional[List[float]]) -> Optional[List[float]]:
+    def validate_embedding(cls, v: list[float] | None) -> list[float] | None:
         """Validate embedding is a list of numbers."""
         if v is not None:
             if not isinstance(v, list):
                 raise ValueError("Embedding must be a list")
-            if not all(isinstance(x, (int, float)) for x in v):
+            if not all(isinstance(x, int | float) for x in v):
                 raise ValueError("Embedding values must be numbers")
             if len(v) == 0:
                 raise ValueError("Embedding cannot be empty")
@@ -130,7 +138,7 @@ class MemoryResponse(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: List[str]) -> List[str]:
+    def validate_tags(cls, v: list[str]) -> list[str]:
         """Validate tags are a list of strings."""
         if not isinstance(v, list):
             raise ValueError("Tags must be a list")
@@ -141,7 +149,7 @@ class MemoryResponse(BaseModel):
 
     @field_validator("metadata")
     @classmethod
-    def validate_metadata(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_metadata(cls, v: dict[str, Any]) -> dict[str, Any]:
         """Validate metadata is a dictionary."""
         if not isinstance(v, dict):
             raise ValueError("Metadata must be a dictionary")
@@ -153,17 +161,17 @@ class MemorySearch(BaseModel):
 
     query: str = Field(..., description="Search query", min_length=1, max_length=10000)
     limit: int = Field(10, ge=1, le=100)
-    threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
-    memory_types: Optional[List[MemoryType]] = None
-    tags: Optional[List[str]] = None
+    threshold: float | None = Field(None, ge=0.0, le=1.0)
+    memory_types: list[MemoryType] | None = None
+    tags: list[str] | None = None
     include_embeddings: bool = False
-    user_id: Optional[str] = None
-    date_from: Optional[datetime] = None
-    date_to: Optional[datetime] = None
+    user_id: str | None = None
+    date_from: datetime | None = None
+    date_to: datetime | None = None
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
         """Validate tags are a list of non-empty strings."""
         if v is not None:
             if not isinstance(v, list):
@@ -175,7 +183,7 @@ class MemorySearch(BaseModel):
 
     @field_validator("memory_types")
     @classmethod
-    def validate_memory_types(cls, v: Optional[List[MemoryType]]) -> Optional[List[MemoryType]]:
+    def validate_memory_types(cls, v: list[MemoryType] | None) -> list[MemoryType] | None:
         """Validate memory types are valid enum values."""
         if v is not None:
             if not isinstance(v, list):
@@ -187,7 +195,7 @@ class MemorySearch(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def validate_date_range(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_date_range(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate date range is logical."""
         date_from = values.get("date_from")
         date_to = values.get("date_to")
@@ -201,16 +209,16 @@ class MemorySearch(BaseModel):
 class MemoryUpdate(BaseModel):
     """Model for updating memories."""
 
-    content: Optional[str] = Field(None, min_length=1, max_length=100000)
-    metadata: Optional[Dict[str, Any]] = None
-    tags: Optional[List[str]] = None
-    memory_type: Optional[MemoryType] = None
-    priority: Optional[MemoryPriority] = None
-    context: Optional[str] = Field(None, max_length=10000)
+    content: str | None = Field(None, min_length=1, max_length=100000)
+    metadata: dict[str, Any] | None = None
+    tags: list[str] | None = None
+    memory_type: MemoryType | None = None
+    priority: MemoryPriority | None = None
+    context: str | None = Field(None, max_length=10000)
 
     @field_validator("metadata")
     @classmethod
-    def validate_metadata(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def validate_metadata(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
         """Validate metadata is a JSON-serializable dictionary."""
         if v is not None:
             if not isinstance(v, dict):
@@ -218,28 +226,28 @@ class MemoryUpdate(BaseModel):
             try:
                 json.dumps(v)
             except (TypeError, ValueError) as e:
-                raise ValueError(f"Metadata must be JSON serializable: {e}")
+                raise ValueError(f"Metadata must be JSON serializable: {e}") from e
         return v
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
         """Validate tags are a list of non-empty strings."""
         if v is not None:
             if not isinstance(v, list):
                 raise ValueError("Tags must be a list")
-            if len(v) > 50:
-                raise ValueError("Cannot have more than 50 tags")
+            if len(v) > MAX_TAGS:
+                raise ValueError(f"Cannot have more than {MAX_TAGS} tags")
             for tag in v:
                 if not isinstance(tag, str) or not tag.strip():
                     raise ValueError("All tags must be non-empty strings")
-                if len(tag) > 100:
-                    raise ValueError("Tag length cannot exceed 100 characters")
+                if len(tag) > MAX_TAG_LENGTH:
+                    raise ValueError(f"Tag length cannot exceed {MAX_TAG_LENGTH} characters")
         return v
 
     @model_validator(mode="before")
     @classmethod
-    def validate_update_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_update_fields(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate at least one update field is provided."""
         # At least one field must be provided for update
         update_fields = [
@@ -261,7 +269,7 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_-]+$")
     email: str = Field(..., pattern=r"^[^@]+@[^@]+\.[^@]+$")
     password: str = Field(..., min_length=8, max_length=128)
-    full_name: Optional[str] = Field(None, max_length=200)
+    full_name: str | None = Field(None, max_length=200)
 
     @field_validator("username")
     @classmethod
@@ -277,8 +285,8 @@ class UserCreate(BaseModel):
     @classmethod
     def validate_password(cls, v: str) -> str:
         """Validate password strength requirements."""
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
+        if len(v) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters long")
         if not any(c.isupper() for c in v):
             raise ValueError("Password must contain at least one uppercase letter")
         if not any(c.islower() for c in v):
@@ -294,7 +302,7 @@ class UserResponse(BaseModel):
     id: str
     username: str
     email: str
-    full_name: Optional[str]
+    full_name: str | None
     is_active: bool
     created_at: datetime
 
@@ -303,15 +311,15 @@ class Token(BaseModel):
     """Authentication token model."""
 
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105
 
 
 class MCPRequest(BaseModel):
     """Model Context Protocol request."""
 
-    id: Optional[Union[str, int]] = None
+    id: str | int | None = None
     method: str
-    params: Optional[Dict[str, Any]] = None
+    params: dict[str, Any] | None = None
 
     @field_validator("method")
     @classmethod
@@ -323,7 +331,7 @@ class MCPRequest(BaseModel):
 
     @field_validator("params")
     @classmethod
-    def validate_params(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def validate_params(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
         """Validate params is a dictionary."""
         if v is not None and not isinstance(v, dict):
             raise ValueError("Params must be a dictionary")
@@ -333,13 +341,13 @@ class MCPRequest(BaseModel):
 class MCPResponse(BaseModel):
     """Model Context Protocol response."""
 
-    id: Optional[Union[str, int]] = None
-    result: Optional[Any] = None
-    error: Optional[Dict[str, Any]] = None
+    id: str | int | None = None
+    result: Any | None = None
+    error: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def validate_response(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_response(cls, values: dict[str, Any]) -> dict[str, Any]:
         """Validate response has either result or error, not both."""
         result = values.get("result")
         error = values.get("error")
@@ -354,7 +362,7 @@ class MCPResponse(BaseModel):
 
     @field_validator("error")
     @classmethod
-    def validate_error(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def validate_error(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
         """Validate error structure with code and message."""
         if v is not None:
             if not isinstance(v, dict):
@@ -375,7 +383,7 @@ class PluginConfig(BaseModel):
     version: str
     description: str
     enabled: bool = True
-    settings: Dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(default_factory=dict)
 
 
 class MetricsData(BaseModel):
@@ -394,6 +402,6 @@ class MetricsData(BaseModel):
         """Validate response time is reasonable."""
         if v < 0:
             raise ValueError("Average response time cannot be negative")
-        if v > 60:  # More than 60 seconds seems unreasonable
+        if v > MAX_RESPONSE_TIME_SECONDS:  # More than 60 seconds seems unreasonable
             raise ValueError("Average response time seems too high")
         return v

@@ -12,13 +12,20 @@ import json
 import weakref
 from datetime import datetime
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import TYPE_CHECKING
+from typing import Any
 
 import structlog
 
-from .config import Settings
-from .memory import MemoryManager
-from .models import MCPRequest, MCPResponse, MemoryCreate, MemorySearch
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from .config import Settings
+    from .memory import MemoryManager
+from .models import MCPRequest
+from .models import MCPResponse
+from .models import MemoryCreate
+from .models import MemorySearch
 
 logger = structlog.get_logger()
 
@@ -57,7 +64,7 @@ class MCPProtocolVersion:
 
 class MCPServer:
     """MCP protocol server for memory operations.
-    
+
     This class implements a complete MCP server with support for:
     - Memory management tools and operations
     - Resource serving for search and statistics
@@ -71,7 +78,7 @@ class MCPServer:
         self.settings = settings
         self._initialized = False
         self._protocol_version = MCPProtocolVersion.DEFAULT_VERSION
-        self._client_info: Optional[Dict[str, Any]] = None
+        self._client_info: dict[str, Any] | None = None
 
         self.capabilities = {
             "logging": {},
@@ -86,11 +93,11 @@ class MCPServer:
             "protocolVersion": self._protocol_version,
         }
 
-        self.active_streams: Dict[str, asyncio.Queue] = {}
+        self.active_streams: dict[str, asyncio.Queue] = {}
         self._cleanup_tasks: weakref.WeakSet = weakref.WeakSet()
         self._closed = False
 
-    async def initialize(self, client_info: Optional[Dict[str, Any]] = None) -> None:
+    async def initialize(self, client_info: dict[str, Any] | None = None) -> None:
         """Initialize MCP server."""
         if self._initialized:
             raise ValueError("Server already initialized")
@@ -113,14 +120,14 @@ class MCPServer:
         )
 
     async def handle_request(
-        self, request: Dict[str, Any], user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, request: dict[str, Any], user_id: str | None = None
+    ) -> dict[str, Any]:
         """Handle MCP protocol requests.
-        
+
         Args:
             request: MCP request dictionary
             user_id: Optional user ID for authorization
-            
+
         Returns:
             MCP response dictionary
         """
@@ -128,15 +135,9 @@ class MCPServer:
 
         try:
             # Validate request structure
-            if not isinstance(request, dict):
-                return self._create_error_response(
-                    request_id, MCPErrorCode.PARSE_ERROR, "Invalid request format"
-                )
-
-            if "method" not in request:
-                return self._create_error_response(
-                    request_id, MCPErrorCode.INVALID_REQUEST, "Missing 'method' field"
-                )
+            validation_error = self._validate_request(request, request_id)
+            if validation_error:
+                return validation_error
 
             mcp_request = MCPRequest(**request)
             method = mcp_request.method
@@ -157,44 +158,17 @@ class MCPServer:
                     "Server not initialized",
                 )
 
-            # Route to appropriate handler
-            if method == "initialize":
-                result = await self._handle_initialize(params)
-            elif method == "tools/list":
-                result = await self._handle_list_tools()
-            elif method == "tools/call":
-                result = await self._handle_tool_call(params, user_id)
-            elif method == "resources/list":
-                result = await self._handle_list_resources()
-            elif method == "resources/read":
-                result = await self._handle_read_resource(params, user_id)
-            elif method == "prompts/list":
-                result = await self._handle_list_prompts()
-            elif method == "prompts/get":
-                result = await self._handle_get_prompt(params)
-            elif method == "logging/setLevel":
-                result = await self._handle_set_log_level(params)
-            elif method == "notifications/subscribe":
-                result = await self._handle_subscribe_notifications(params, user_id)
-            # Legacy memory operations (for backwards compatibility)
-            elif method == "memories/create":
-                result = await self._handle_memory_create(params, user_id)
-            elif method == "memories/search":
-                result = await self._handle_memory_search(params, user_id)
-            elif method == "memories/get":
-                result = await self._handle_memory_get(params, user_id)
-            elif method == "memories/list":
-                result = await self._handle_memory_list(params, user_id)
-            elif method == "memories/update":
-                result = await self._handle_memory_update(params, user_id)
-            elif method == "memories/delete":
-                result = await self._handle_memory_delete(params, user_id)
-            else:
+            # Get and execute handler
+            handler = self._get_method_handler(method)
+            if handler is None:
                 return self._create_error_response(
                     request_id,
                     MCPErrorCode.METHOD_NOT_FOUND,
                     f"Unknown method: {method}",
                 )
+
+            # Execute handler with appropriate parameters
+            result = await self._execute_handler(handler, method, params, user_id)
 
             return MCPResponse(id=request_id, result=result).dict()
 
@@ -222,20 +196,83 @@ class MCPServer:
                 {"type": type(e).__name__},
             )
 
+    def _validate_request(self, request: Any, request_id: Any) -> dict[str, Any] | None:
+        """Validate request structure."""
+        if not isinstance(request, dict):
+            return self._create_error_response(
+                request_id, MCPErrorCode.PARSE_ERROR, "Invalid request format"
+            )
+
+        if "method" not in request:
+            return self._create_error_response(
+                request_id, MCPErrorCode.INVALID_REQUEST, "Missing 'method' field"
+            )
+
+        return None
+
+    def _get_method_handler(self, method: str) -> Any:
+        """Get handler for a specific method."""
+        # Dictionary of method handlers
+        handlers = {
+            "initialize": self._handle_initialize,
+            "tools/list": self._handle_list_tools,
+            "tools/call": self._handle_tool_call,
+            "resources/list": self._handle_list_resources,
+            "resources/read": self._handle_read_resource,
+            "prompts/list": self._handle_list_prompts,
+            "prompts/get": self._handle_get_prompt,
+            "logging/setLevel": self._handle_set_log_level,
+            "notifications/subscribe": self._handle_subscribe_notifications,
+            # Legacy memory operations
+            "memories/create": self._handle_memory_create,
+            "memories/search": self._handle_memory_search,
+            "memories/get": self._handle_memory_get,
+            "memories/list": self._handle_memory_list,
+            "memories/update": self._handle_memory_update,
+            "memories/delete": self._handle_memory_delete,
+        }
+
+        return handlers.get(method)
+
+    async def _execute_handler(
+        self,
+        handler: Any,
+        method: str,
+        params: dict[str, Any],
+        user_id: str | None
+    ) -> Any:
+        """Execute handler with appropriate parameters."""
+        # Methods that only need params
+        params_only_methods = {
+            "initialize", "prompts/get", "logging/setLevel"
+        }
+
+        # Methods that need no parameters
+        no_params_methods = {
+            "tools/list", "resources/list", "prompts/list"
+        }
+
+        if method in params_only_methods:
+            return await handler(params)
+        elif method in no_params_methods:
+            return await handler()
+        else:
+            return await handler(params, user_id)
+
     def _create_error_response(
         self,
-        request_id: Optional[str],
+        request_id: str | None,
         error_code: MCPErrorCode,
         message: str,
-        data: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Create standardized error response."""
         return MCPResponse(
             id=request_id,
             error={"code": error_code.value, "message": message, "data": data},
         ).dict()
 
-    async def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle MCP initialization."""
         protocol_version = params.get(
             "protocolVersion", MCPProtocolVersion.DEFAULT_VERSION
@@ -253,7 +290,7 @@ class MCPServer:
             "protocolVersion": self._protocol_version,
         }
 
-    async def _handle_list_tools(self) -> Dict[str, Any]:
+    async def _handle_list_tools(self) -> dict[str, Any]:
         """List available MCP tools."""
         tools = [
             {
@@ -377,7 +414,7 @@ class MCPServer:
 
         return {"tools": tools}
 
-    async def _handle_list_resources(self) -> Dict[str, Any]:
+    async def _handle_list_resources(self) -> dict[str, Any]:
         """List available MCP resources."""
         resources = [
             {
@@ -396,8 +433,8 @@ class MCPServer:
         return {"resources": resources}
 
     async def _handle_read_resource(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Read a specific resource."""
         uri = params.get("uri")
 
@@ -432,11 +469,11 @@ class MCPServer:
                     ]
                 }
             except Exception as e:
-                raise ValueError(f"Failed to get memory stats: {e!s}")
+                raise ValueError(f"Failed to get memory stats: {e!s}") from e
         else:
             raise ValueError(f"Unknown resource URI: {uri}")
 
-    async def _handle_list_prompts(self) -> Dict[str, Any]:
+    async def _handle_list_prompts(self) -> dict[str, Any]:
         """List available prompts."""
         prompts = [
             {
@@ -454,7 +491,7 @@ class MCPServer:
         ]
         return {"prompts": prompts}
 
-    async def _handle_get_prompt(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_get_prompt(self, params: dict[str, Any]) -> dict[str, Any]:
         """Get a specific prompt."""
         name = params.get("name")
 
@@ -478,7 +515,7 @@ class MCPServer:
         else:
             raise ValueError(f"Unknown prompt: {name}")
 
-    async def _handle_set_log_level(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _handle_set_log_level(self, params: dict[str, Any]) -> dict[str, Any]:
         """Set logging level."""
         level = params.get("level", "info").upper()
 
@@ -490,12 +527,12 @@ class MCPServer:
 
         logging.getLogger().setLevel(getattr(logging, level))
 
-        logger.info(f"Log level set to {level}")
+        logger.info("Log level set to %s", level)
         return {"success": True, "level": level}
 
     async def _handle_tool_call(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Handle tool execution calls."""
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
@@ -516,13 +553,13 @@ class MCPServer:
             raise ValueError(f"Unknown tool: {tool_name}")
 
     async def _tool_memory_search(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory search tool."""
         try:
             search_data = MemorySearch(**args)
         except Exception as e:
-            raise ValueError(f"Invalid search parameters: {e!s}")
+            raise ValueError(f"Invalid search parameters: {e!s}") from e
         results = await self.memory_manager.search_memories(search_data, user_id)
 
         return {
@@ -541,13 +578,13 @@ class MCPServer:
         }
 
     async def _tool_memory_create(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory create tool."""
         try:
             memory_data = MemoryCreate(**args)
         except Exception as e:
-            raise ValueError(f"Invalid memory creation parameters: {e!s}")
+            raise ValueError(f"Invalid memory creation parameters: {e!s}") from e
         memory = await self.memory_manager.create_memory(memory_data, user_id)
 
         return {
@@ -559,8 +596,8 @@ class MCPServer:
         }
 
     async def _tool_memory_get(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory get tool."""
         memory_id = args.get("memory_id")
         memory = await self.memory_manager.get_memory(memory_id, user_id)
@@ -578,8 +615,8 @@ class MCPServer:
         }
 
     async def _tool_memory_list(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory list tool."""
         # Implementation for listing memories with pagination
         limit = args.get("limit", 20)
@@ -618,7 +655,7 @@ class MCPServer:
             results = await self.memory_manager.db.execute_query(query, *params)
         except Exception as e:
             logger.error("Database query failed", error=str(e), query=query)
-            raise ValueError(f"Failed to list memories: {e!s}")
+            raise ValueError(f"Failed to list memories: {e!s}") from e
         memories = [dict(row) for row in results]
 
         return {
@@ -638,8 +675,8 @@ class MCPServer:
         }
 
     async def _tool_memory_update(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory update tool."""
         memory_id = args.pop("memory_id")
 
@@ -648,7 +685,7 @@ class MCPServer:
         try:
             update_data = MemoryUpdate(**args)
         except Exception as e:
-            raise ValueError(f"Invalid update parameters: {e!s}")
+            raise ValueError(f"Invalid update parameters: {e!s}") from e
 
         memory = await self.memory_manager.update_memory(
             memory_id, update_data, user_id
@@ -668,8 +705,8 @@ class MCPServer:
         }
 
     async def _tool_memory_delete(
-        self, args: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, args: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute memory delete tool."""
         memory_id = args.get("memory_id")
         success = await self.memory_manager.delete_memory(memory_id, user_id)
@@ -687,30 +724,30 @@ class MCPServer:
         }
 
     async def _handle_memory_create(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory create handler."""
         try:
             memory_data = MemoryCreate(**params)
         except Exception as e:
-            raise ValueError(f"Invalid memory creation parameters: {e!s}")
+            raise ValueError(f"Invalid memory creation parameters: {e!s}") from e
         memory = await self.memory_manager.create_memory(memory_data, user_id)
         return {"memory": memory.dict()}
 
     async def _handle_memory_search(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory search handler."""
         try:
             search_data = MemorySearch(**params)
         except Exception as e:
-            raise ValueError(f"Invalid search parameters: {e!s}")
+            raise ValueError(f"Invalid search parameters: {e!s}") from e
         results = await self.memory_manager.search_memories(search_data, user_id)
         return {"results": [r.dict() for r in results]}
 
     async def _handle_memory_get(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory get handler."""
         memory_id = params.get("memory_id")
         memory = await self.memory_manager.get_memory(memory_id, user_id)
@@ -719,14 +756,14 @@ class MCPServer:
         return {"memory": memory.dict()}
 
     async def _handle_memory_list(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory list handler."""
         return await self._tool_memory_list(params, user_id)
 
     async def _handle_memory_update(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory update handler."""
         memory_id = params.pop("memory_id")
 
@@ -735,7 +772,7 @@ class MCPServer:
         try:
             update_data = MemoryUpdate(**params)
         except Exception as e:
-            raise ValueError(f"Invalid update parameters: {e!s}")
+            raise ValueError(f"Invalid update parameters: {e!s}") from e
 
         memory = await self.memory_manager.update_memory(
             memory_id, update_data, user_id
@@ -745,8 +782,8 @@ class MCPServer:
         return {"memory": memory.dict()}
 
     async def _handle_memory_delete(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Direct memory delete handler."""
         memory_id = params.get("memory_id")
         success = await self.memory_manager.delete_memory(memory_id, user_id)
@@ -755,8 +792,8 @@ class MCPServer:
         return {"deleted": True}
 
     async def _handle_subscribe_notifications(
-        self, params: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, params: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Subscribe to real-time notifications."""
         stream_id = f"{user_id}_{datetime.now().isoformat()}"
         self.active_streams[stream_id] = asyncio.Queue()
@@ -767,15 +804,15 @@ class MCPServer:
             "events": ["memory_created", "memory_updated", "memory_deleted"],
         }
 
-    async def sse_stream(self, user_id: str) -> AsyncGenerator[str, None]:
+    async def sse_stream(self, user_id: str) -> AsyncGenerator[str]:
         """Server-Sent Events stream for real-time updates.
-        
+
         Args:
             user_id: User ID for stream authorization and filtering
-            
+
         Yields:
             SSE-formatted event strings
-            
+
         Raises:
             RuntimeError: If server is closed
         """
@@ -814,7 +851,7 @@ class MCPServer:
 
                     yield f"data: {json.dumps(event)}\n\n"
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send keepalive ping
                     ping_event = {
                         "type": "ping",
@@ -855,10 +892,10 @@ class MCPServer:
             pass
 
     async def broadcast_event(
-        self, event: Dict[str, Any], user_id: Optional[str] = None
+        self, event: dict[str, Any], user_id: str | None = None
     ) -> None:
         """Broadcast event to active streams.
-        
+
         Args:
             event: Event dictionary to broadcast
             user_id: Optional user ID to filter recipients
@@ -904,7 +941,7 @@ class MCPServer:
 
     async def close(self) -> None:
         """Close MCP server and cleanup resources.
-        
+
         This method gracefully shuts down the server, cancels all tasks,
         and cleans up all active streams and resources.
         """
@@ -922,7 +959,7 @@ class MCPServer:
         if self._cleanup_tasks:
             try:
                 await asyncio.wait(list(self._cleanup_tasks), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Some cleanup tasks did not complete in time")
 
         # Cancel all active streams
@@ -955,6 +992,6 @@ class MCPServer:
         """Get current protocol version."""
         return self._protocol_version
 
-    def get_client_info(self) -> Optional[Dict[str, Any]]:
+    def get_client_info(self) -> dict[str, Any] | None:
         """Get client information."""
         return self._client_info.copy() if self._client_info else None

@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Advanced Memory Deduplication System for mem0ai
+"""Advanced Memory Deduplication System for mem0ai.
+
 Production-grade deduplication with multiple strategies and algorithms.
 """
 
 import asyncio
 import hashlib
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import asyncpg
 import jellyfish
@@ -23,6 +25,9 @@ from nltk.stem import PorterStemmer
 from nltk.tokenize import word_tokenize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+# Memory deduplication constants
+MINIMUM_MEMORIES_FOR_ANALYSIS = 2
 
 # Download required NLTK data
 try:
@@ -85,8 +90,8 @@ class DuplicateGroup:
     """Group of duplicate memories."""
 
     canonical_id: str  # ID of the memory to keep
-    duplicate_ids: List[str]  # IDs of memories to remove/merge
-    similarity_scores: List[float]  # Similarity scores for each duplicate
+    duplicate_ids: list[str]  # IDs of memories to remove/merge
+    similarity_scores: list[float]  # Similarity scores for each duplicate
     detection_method: str  # How duplicates were detected
     confidence: float  # Confidence in duplicate detection
     merge_strategy: str  # How to handle the duplicates
@@ -98,7 +103,7 @@ class DeduplicationResult:
 
     user_id: str
     total_memories: int
-    duplicate_groups: List[DuplicateGroup]
+    duplicate_groups: list[DuplicateGroup]
     duplicates_found: int
     duplicates_removed: int
     space_saved_percent: float
@@ -160,7 +165,7 @@ class SimilarityCalculator:
         self.tfidf_matrix = None
         self.text_to_index = {}
 
-    def fit_tfidf(self, texts: List[str]):
+    def fit_tfidf(self, texts: list[str]):
         """Fit TF-IDF vectorizer on texts."""
         self.tfidf_vectorizer = TfidfVectorizer(
             max_features=10000, stop_words="english", ngram_range=(1, 2)
@@ -188,7 +193,8 @@ class SimilarityCalculator:
                 vec1 = self.tfidf_vectorizer.transform([text1])
                 vec2 = self.tfidf_vectorizer.transform([text2])
                 return cosine_similarity(vec1, vec2)[0][0]
-            except:
+            except Exception as err:
+                logger.warning("TF-IDF similarity calculation failed: %s", err)
                 return 0.0
 
         elif metric == SimilarityMetric.JACCARD:
@@ -203,7 +209,8 @@ class SimilarityCalculator:
                 soundex1 = jellyfish.soundex(text1[:50])  # Limit length for soundex
                 soundex2 = jellyfish.soundex(text2[:50])
                 return 1.0 if soundex1 == soundex2 else 0.0
-            except:
+            except Exception as err:
+                logger.warning("Soundex similarity calculation failed: %s", err)
                 return 0.0
 
         else:
@@ -257,7 +264,7 @@ class MemoryDeduplicator:
         if self.pool:
             await self.pool.close()
 
-    async def find_duplicates(self, user_id: str) -> List[DuplicateGroup]:
+    async def find_duplicates(self, user_id: str) -> list[DuplicateGroup]:
         """Find duplicate memories for a user."""
         start_time = time.time()
 
@@ -273,10 +280,10 @@ class MemoryDeduplicator:
                 user_id,
             )
 
-        if len(memories) < 2:
+        if len(memories) < MINIMUM_MEMORIES_FOR_ANALYSIS:
             return []
 
-        logger.info(f"Analyzing {len(memories)} memories for user {user_id}")
+        logger.info("Analyzing {len(memories)} memories for user %s", user_id)
 
         # Apply different strategies based on configuration
         if self.config.strategy == DeduplicationStrategy.EXACT_MATCH:
@@ -300,8 +307,8 @@ class MemoryDeduplicator:
         return duplicate_groups
 
     async def _find_exact_duplicates(
-        self, memories: List[Dict]
-    ) -> List[DuplicateGroup]:
+        self, memories: list[dict]
+    ) -> list[DuplicateGroup]:
         """Find exact text duplicates."""
         text_to_memories = {}
         duplicate_groups = []
@@ -316,7 +323,7 @@ class MemoryDeduplicator:
                 text_to_memories[normalized_text] = [memory]
 
         # Create duplicate groups
-        for normalized_text, memory_group in text_to_memories.items():
+        for _normalized_text, memory_group in text_to_memories.items():
             if len(memory_group) > 1:
                 # Sort by creation time (newest first if preserve_latest is True)
                 memory_group.sort(
@@ -340,8 +347,8 @@ class MemoryDeduplicator:
         return duplicate_groups
 
     async def _find_fuzzy_duplicates(
-        self, memories: List[Dict]
-    ) -> List[DuplicateGroup]:
+        self, memories: list[dict]
+    ) -> list[DuplicateGroup]:
         """Find fuzzy text duplicates using multiple similarity metrics."""
         duplicate_groups = []
         processed_pairs = set()
@@ -397,11 +404,11 @@ class MemoryDeduplicator:
                 weights = np.array([0.25, 0.25, 0.35, 0.15])  # LEVENSHTEIN, JARO_WINKLER, COSINE_TFIDF, JACCARD
                 similarity_values = np.array([
                     similarities[SimilarityMetric.LEVENSHTEIN],
-                    similarities[SimilarityMetric.JARO_WINKLER], 
+                    similarities[SimilarityMetric.JARO_WINKLER],
                     similarities[SimilarityMetric.COSINE_TFIDF],
                     similarities[SimilarityMetric.JACCARD]
                 ])
-                
+
                 weighted_similarity = float(np.dot(similarity_values, weights))
 
                 if weighted_similarity >= self.config.text_similarity_threshold:
@@ -435,20 +442,20 @@ class MemoryDeduplicator:
         return duplicate_groups
 
     async def _find_semantic_duplicates(
-        self, memories: List[Dict]
-    ) -> List[DuplicateGroup]:
+        self, memories: list[dict]
+    ) -> list[DuplicateGroup]:
         """Find semantically similar memories using embeddings."""
         duplicate_groups = []
 
         # Filter memories with embeddings
         memories_with_embeddings = [m for m in memories if m["embedding"] is not None]
 
-        if len(memories_with_embeddings) < 2:
+        if len(memories_with_embeddings) < MINIMUM_MEMORIES_FOR_ANALYSIS:
             return duplicate_groups
 
         # Convert embeddings to numpy array with proper type
         embeddings = np.array(
-            [m["embedding"] for m in memories_with_embeddings], 
+            [m["embedding"] for m in memories_with_embeddings],
             dtype=np.float32
         )
 
@@ -507,7 +514,7 @@ class MemoryDeduplicator:
 
         return duplicate_groups
 
-    async def _find_hash_duplicates(self, memories: List[Dict]) -> List[DuplicateGroup]:
+    async def _find_hash_duplicates(self, memories: list[dict]) -> list[DuplicateGroup]:
         """Find duplicates using content hashing."""
         hash_to_memories = {}
 
@@ -521,7 +528,7 @@ class MemoryDeduplicator:
 
         duplicate_groups = []
 
-        for content_hash, memory_group in hash_to_memories.items():
+        for _content_hash, memory_group in hash_to_memories.items():
             if len(memory_group) > 1:
                 # Sort by creation time and importance
                 memory_group.sort(
@@ -545,8 +552,8 @@ class MemoryDeduplicator:
         return duplicate_groups
 
     async def _find_temporal_duplicates(
-        self, memories: List[Dict]
-    ) -> List[DuplicateGroup]:
+        self, memories: list[dict]
+    ) -> list[DuplicateGroup]:
         """Find duplicates within temporal windows."""
         duplicate_groups = []
 
@@ -603,8 +610,8 @@ class MemoryDeduplicator:
         return duplicate_groups
 
     async def _find_hybrid_duplicates(
-        self, memories: List[Dict]
-    ) -> List[DuplicateGroup]:
+        self, memories: list[dict]
+    ) -> list[DuplicateGroup]:
         """Find duplicates using hybrid approach combining multiple strategies."""
         all_groups = []
 
@@ -621,14 +628,14 @@ class MemoryDeduplicator:
                 groups = await strategy(memories)
                 all_groups.extend(groups)
             except Exception as e:
-                logger.warning(f"Strategy failed: {e}")
+                logger.warning("Strategy failed: %s", e)
 
         # Merge overlapping groups and remove duplicates
         return self._merge_duplicate_groups(all_groups)
 
     def _merge_duplicate_groups(
-        self, groups: List[DuplicateGroup]
-    ) -> List[DuplicateGroup]:
+        self, groups: list[DuplicateGroup]
+    ) -> list[DuplicateGroup]:
         """Merge overlapping duplicate groups."""
         if not groups:
             return []
@@ -682,7 +689,7 @@ class MemoryDeduplicator:
 
         return merged_groups
 
-    def _merge_group_cluster(self, groups: List[DuplicateGroup]) -> DuplicateGroup:
+    def _merge_group_cluster(self, groups: list[DuplicateGroup]) -> DuplicateGroup:
         """Merge a cluster of overlapping groups."""
         all_memory_ids = set()
         all_similarities = []
@@ -756,7 +763,7 @@ class MemoryDeduplicator:
         return result
 
     async def _remove_duplicates(
-        self, user_id: str, duplicate_groups: List[DuplicateGroup]
+        self, user_id: str, duplicate_groups: list[DuplicateGroup]
     ) -> int:
         """Remove duplicate memories and log the operation."""
         removed_count = 0
@@ -794,11 +801,11 @@ class MemoryDeduplicator:
                         removed_count += len(group.duplicate_ids)
 
                 except Exception as e:
-                    logger.error(f"Failed to remove duplicate group: {e}")
+                    logger.error("Failed to remove duplicate group: %s", e)
 
         return removed_count
 
-    async def get_deduplication_stats(self, user_id: str) -> Dict[str, Any]:
+    async def get_deduplication_stats(self, user_id: str) -> dict[str, Any]:
         """Get deduplication statistics for a user."""
         async with self.pool.acquire() as conn:
             stats = await conn.fetchrow(

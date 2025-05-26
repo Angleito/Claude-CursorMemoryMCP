@@ -9,9 +9,6 @@ from datetime import datetime
 from datetime import timedelta
 from io import BytesIO
 from typing import Any
-from typing import Dict
-from typing import Optional
-from typing import Union
 
 import pyotp
 import qrcode
@@ -33,7 +30,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # Encryption setup
-def get_fernet_key(password: str, salt: Optional[bytes] = None) -> bytes:
+def get_fernet_key(password: str, salt: bytes | None = None) -> bytes:
     """Generate Fernet key from password."""
     if salt is None:
         salt = os.urandom(16)
@@ -84,7 +81,7 @@ class SecurityManager:
 
     # JWT tokens
     def create_access_token(
-        self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None
+        self, data: dict[str, Any], expires_delta: timedelta | None = None
     ) -> str:
         """Create a JWT access token."""
         to_encode = data.copy()
@@ -106,7 +103,7 @@ class SecurityManager:
         return encoded_jwt
 
     def create_refresh_token(
-        self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None
+        self, data: dict[str, Any], expires_delta: timedelta | None = None
     ) -> str:
         """Create a JWT refresh token."""
         to_encode = data.copy()
@@ -127,7 +124,7 @@ class SecurityManager:
         )
         return encoded_jwt
 
-    def verify_token(self, token: str) -> Optional[TokenData]:
+    def verify_token(self, token: str) -> TokenData | None:
         """Verify and decode a JWT token."""
         try:
             payload = jwt.decode(
@@ -172,7 +169,7 @@ class SecurityManager:
         return hmac.compare_digest(computed_hash, stored_hash)
 
     # Data encryption
-    def encrypt_data(self, data: Union[str, bytes]) -> str:
+    def encrypt_data(self, data: str | bytes) -> str:
         """Encrypt sensitive data."""
         if isinstance(data, str):
             data = data.encode()
@@ -186,7 +183,7 @@ class SecurityManager:
             decrypted = self.fernet.decrypt(encrypted_bytes)
             return decrypted.decode()
         except Exception:
-            raise ValueError("Failed to decrypt data")
+            raise ValueError("Failed to decrypt data") from None
 
     # MFA (Multi-Factor Authentication)
     def generate_mfa_secret(self) -> str:
@@ -223,7 +220,7 @@ class SecurityManager:
         return secrets.token_urlsafe(length)
 
     def generate_signed_token(
-        self, data: Dict[str, Any], expires_minutes: int = 60
+        self, data: dict[str, Any], expires_minutes: int = 60
     ) -> str:
         """Generate a signed token for secure operations."""
         expire = datetime.utcnow() + timedelta(minutes=expires_minutes)
@@ -235,7 +232,7 @@ class SecurityManager:
             algorithm=self.settings.security.jwt_algorithm,
         )
 
-    def verify_signed_token(self, token: str) -> Optional[Dict[str, Any]]:
+    def verify_signed_token(self, token: str) -> dict[str, Any] | None:
         """Verify a signed token."""
         try:
             payload = jwt.decode(
@@ -253,7 +250,7 @@ class SecurityManager:
         return f"rate_limit:{identifier}:{window}"
 
     # Security headers
-    def get_security_headers(self) -> Dict[str, str]:
+    def get_security_headers(self) -> dict[str, str]:
         """Get security headers for HTTP responses."""
         return {
             "X-Content-Type-Options": "nosniff",

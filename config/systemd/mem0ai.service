@@ -15,11 +15,11 @@ StartLimitBurst=3
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/opt/mem0ai
+WorkingDirectory=/mem0ai
 
 # Pre-start checks and cleanup
-ExecStartPre=/bin/bash -c 'test -f /opt/mem0ai/docker-compose.yml'
-ExecStartPre=/bin/bash -c 'test -f /opt/mem0ai/.env'
+ExecStartPre=/bin/bash -c 'test -f /mem0ai/docker-compose.yml'
+ExecStartPre=/bin/bash -c 'test -f /mem0ai/.env'
 ExecStartPre=-/usr/bin/docker-compose down --timeout 30
 
 # Main service commands
@@ -38,7 +38,7 @@ Group=mem0ai
 Environment=COMPOSE_HTTP_TIMEOUT=180
 Environment=DOCKER_CLIENT_TIMEOUT=180
 Environment=COMPOSE_PARALLEL_LIMIT=4
-EnvironmentFile=-/opt/mem0ai/.env
+EnvironmentFile=-/mem0ai/.env
 
 # Timeouts
 TimeoutStartSec=600
@@ -84,7 +84,7 @@ SystemCallFilter=~@debug @mount @cpu-emulation @obsolete @privileged @reboot @sw
 SystemCallErrorNumber=EPERM
 
 # File system access
-ReadWritePaths=/opt/mem0ai
+ReadWritePaths=/mem0ai
 ReadWritePaths=/tmp
 ReadWritePaths=/var/lib/docker/volumes
 ReadOnlyPaths=/usr /lib /lib64 /etc/ssl /etc/ca-certificates

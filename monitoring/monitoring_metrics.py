@@ -21,33 +21,32 @@ Examples:
 
 import asyncio
 import contextlib
-import logging
+import statistics
 import threading
 import time
-from collections import defaultdict, deque
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Union,
-    Tuple,
-    AsyncGenerator,
-    NamedTuple,
-    Protocol,
-)
-import statistics
+import uuid
 import weakref
+from collections import defaultdict
+from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from dataclasses import field
+from datetime import datetime
+from datetime import timedelta
+from enum import Enum
+from typing import Any
 
 import asyncpg
 import numpy as np
 import psutil
 import structlog
+from aiohttp import web
+
+# Monitoring metrics constants
+MIN_VALUES_FOR_COMPRESSION = 100
+MIN_PERCENTILE_VALUES = 5
+FLOAT_COMPARISON_PRECISION = 1e-9
 
 # Use structlog for consistent logging
 structlog.configure(
@@ -92,7 +91,7 @@ class AlertLevel(Enum):
 @dataclass(frozen=True, slots=True)
 class MetricDefinition:
     """Definition of a metric with validation and optimization.
-    
+
     Attributes:
         name: Unique metric name (must be valid Prometheus metric name)
         metric_type: Type of metric (counter, gauge, histogram, timing)
@@ -107,20 +106,20 @@ class MetricDefinition:
     metric_type: MetricType
     description: str
     unit: str
-    labels: Optional[List[str]] = None
-    buckets: Optional[List[float]] = None
+    labels: list[str] | None = None
+    buckets: list[float] | None = None
     help_text: str = ""
-    
+
     def __post_init__(self) -> None:
         """Validate metric definition."""
         if not self.name or not self.name.replace('_', '').replace(':', '').isalnum():
             raise ValueError(f"Invalid metric name: {self.name}")
-        
+
         if self.labels and len(set(self.labels)) != len(self.labels):
             raise ValueError("Duplicate labels not allowed")
-        
+
         if self.metric_type == MetricType.HISTOGRAM and self.buckets:
-            if not all(isinstance(b, (int, float)) for b in self.buckets):
+            if not all(isinstance(b, int | float) for b in self.buckets):
                 raise ValueError("Histogram buckets must be numeric")
             if self.buckets != sorted(self.buckets):
                 raise ValueError("Histogram buckets must be sorted")
@@ -129,7 +128,7 @@ class MetricDefinition:
 @dataclass(slots=True)
 class MetricValue:
     """A metric value with timestamp and labels optimized for memory efficiency.
-    
+
     Attributes:
         name: Metric name
         value: Numeric value
@@ -140,20 +139,20 @@ class MetricValue:
     name: str
     value: float
     timestamp: datetime
-    labels: Optional[Dict[str, str]] = None
-    
+    labels: dict[str, str] | None = None
+
     def __post_init__(self) -> None:
         """Validate and optimize metric value."""
-        if not isinstance(self.value, (int, float)) or not np.isfinite(self.value):
+        if not isinstance(self.value, int | float) or not np.isfinite(self.value):
             raise ValueError(f"Invalid metric value: {self.value}")
-        
+
         # Intern string values for memory efficiency
         if self.labels:
             self.labels = {
-                k: v for k, v in self.labels.items() 
+                k: v for k, v in self.labels.items()
                 if k and v  # Remove empty keys/values
             }
-    
+
     @property
     def age_seconds(self) -> float:
         """Get age of this metric value in seconds."""
@@ -163,7 +162,7 @@ class MetricValue:
 @dataclass(frozen=True)
 class AlertRule:
     """Alert rule definition with enhanced validation.
-    
+
     Attributes:
         name: Unique rule name
         metric_name: Name of metric to monitor
@@ -182,23 +181,23 @@ class AlertRule:
     level: AlertLevel
     duration_seconds: int = 60
     description: str = ""
-    labels: Optional[Dict[str, str]] = None
+    labels: dict[str, str] | None = None
     aggregation: str = "avg"
     enabled: bool = True
-    
+
     def __post_init__(self) -> None:
         """Validate alert rule parameters."""
         if not self.name or not self.metric_name:
             raise ValueError("Name and metric_name are required")
-        
+
         if self.duration_seconds < 0:
             raise ValueError("Duration must be non-negative")
-        
+
         # Validate condition format
         import re
         if not re.match(r'^[><=!]+ *-?\d+(\.\d+)?$', self.condition.strip()):
             raise ValueError(f"Invalid condition format: {self.condition}")
-        
+
         if self.aggregation not in {'avg', 'max', 'min', 'sum', 'count', 'p95', 'p99'}:
             raise ValueError(f"Invalid aggregation: {self.aggregation}")
 
@@ -206,7 +205,7 @@ class AlertRule:
 @dataclass
 class Alert:
     """An active alert with comprehensive tracking.
-    
+
     Attributes:
         id: Unique alert identifier
         rule_name: Name of the rule that fired
@@ -231,30 +230,30 @@ class Alert:
     value: float
     threshold: str
     started_at: datetime
-    resolved_at: Optional[datetime] = None
-    labels: Dict[str, str] = field(default_factory=dict)
-    fingerprint: Optional[str] = None
-    ack_time: Optional[datetime] = None
-    ack_by: Optional[str] = None
-    
+    resolved_at: datetime | None = None
+    labels: dict[str, str] = field(default_factory=dict)
+    fingerprint: str | None = None
+    ack_time: datetime | None = None
+    ack_by: str | None = None
+
     def __post_init__(self) -> None:
         """Generate fingerprint if not provided."""
         if not self.fingerprint:
             import hashlib
             content = f"{self.rule_name}:{self.metric_name}:{sorted(self.labels.items())}"
-            self.fingerprint = hashlib.md5(content.encode()).hexdigest()[:8]
-    
+            self.fingerprint = hashlib.sha256(content.encode(), usedforsecurity=False).hexdigest()[:8]
+
     @property
     def duration(self) -> timedelta:
         """Get alert duration."""
         end_time = self.resolved_at or datetime.now()
         return end_time - self.started_at
-    
+
     @property
     def is_resolved(self) -> bool:
         """Check if alert is resolved."""
         return self.resolved_at is not None
-    
+
     @property
     def is_acknowledged(self) -> bool:
         """Check if alert is acknowledged."""
@@ -263,7 +262,7 @@ class Alert:
 
 class MetricsCollector:
     """High-performance metrics collector with memory optimization.
-    
+
     This collector provides:
     - Thread-safe metric storage with RWLock optimization
     - Automatic memory management and cleanup
@@ -273,15 +272,15 @@ class MetricsCollector:
     """
 
     def __init__(
-        self, 
-        retention_hours: int = 24, 
+        self,
+        retention_hours: int = 24,
         max_values_per_metric: int = 5000,
         cleanup_interval: int = 300,  # 5 minutes
         enable_compression: bool = True,
         thread_pool_size: int = 2
     ) -> None:
         """Initialize metrics collector with performance optimizations.
-        
+
         Args:
             retention_hours: How long to keep metric values
             max_values_per_metric: Maximum values per metric (memory limit)
@@ -293,35 +292,35 @@ class MetricsCollector:
         self.max_values_per_metric = max_values_per_metric
         self.cleanup_interval = cleanup_interval
         self.enable_compression = enable_compression
-        
+
         # Thread-safe storage with RWLock for better performance
-        self._metrics: Dict[str, deque] = defaultdict(
+        self._metrics: dict[str, deque] = defaultdict(
             lambda: deque(maxlen=max_values_per_metric)
         )
         self._lock = threading.RLock()
         self._cleanup_counter = 0
         self._last_cleanup = time.time()
-        
+
         # Performance tracking
         self._record_times: deque = deque(maxlen=1000)
         self._compression_stats = {'compressed_count': 0, 'original_size': 0, 'compressed_size': 0}
-        
+
         # Background thread pool for cleanup and compression
         self._thread_pool = ThreadPoolExecutor(
             max_workers=thread_pool_size,
             thread_name_prefix="metrics_collector"
         )
-        
+
         # Weak references to avoid memory leaks
         self._metric_refs: weakref.WeakSet = weakref.WeakSet()
-        
-        logger.info("MetricsCollector initialized", 
+
+        logger.info("MetricsCollector initialized",
                    retention_hours=retention_hours,
                    max_values_per_metric=max_values_per_metric,
                    cleanup_interval=cleanup_interval)
 
         # Built-in metric definitions with optimized buckets
-        self.metric_definitions: Dict[str, MetricDefinition] = {
+        self.metric_definitions: dict[str, MetricDefinition] = {
             "vector_search_duration_ms": MetricDefinition(
                 name="vector_search_duration_ms",
                 metric_type=MetricType.HISTOGRAM,
@@ -401,14 +400,14 @@ class MetricsCollector:
         }
 
     def record_metric(
-        self, 
-        name: str, 
-        value: float, 
-        labels: Optional[Dict[str, str]] = None,
-        timestamp: Optional[datetime] = None
+        self,
+        name: str,
+        value: float,
+        labels: dict[str, str] | None = None,
+        timestamp: datetime | None = None
     ) -> None:
         """Record a metric value with performance optimization.
-        
+
         Args:
             name: Metric name
             value: Metric value
@@ -416,16 +415,16 @@ class MetricsCollector:
             timestamp: Optional timestamp (defaults to current time)
         """
         start_time = time.perf_counter()
-        
+
         try:
             # Validate inputs
-            if not isinstance(value, (int, float)) or not np.isfinite(value):
+            if not isinstance(value, int | float) or not np.isfinite(value):
                 logger.warning("Invalid metric value", name=name, value=value)
                 return
-            
+
             # Sanitize and intern labels for memory efficiency
             processed_labels = self._process_labels(labels) if labels else None
-            
+
             metric_value = MetricValue(
                 name=name,
                 value=float(value),
@@ -444,26 +443,26 @@ class MetricsCollector:
 
             # Efficient cleanup scheduling
             self._cleanup_counter += 1
-            if (self._cleanup_counter % 1000 == 0 or 
+            if (self._cleanup_counter % 1000 == 0 or
                 time.time() - self._last_cleanup > self.cleanup_interval):
                 # Submit cleanup to thread pool to avoid blocking
                 self._thread_pool.submit(self._cleanup_old_metrics)
-                
+
         except Exception as e:
             logger.error("Error recording metric", name=name, value=value, error=str(e))
-    
-    def _process_labels(self, labels: Dict[str, str]) -> Dict[str, str]:
+
+    def _process_labels(self, labels: dict[str, str]) -> dict[str, str]:
         """Process and intern labels for memory efficiency.
-        
+
         Args:
             labels: Input labels
-            
+
         Returns:
             Processed labels with interned strings
         """
         if not labels:
             return {}
-        
+
         # Intern strings to reduce memory usage
         processed = {}
         for key, value in labels.items():
@@ -472,7 +471,7 @@ class MetricsCollector:
                 processed_key = key[:100]
                 processed_value = str(value)[:200]
                 processed[processed_key] = processed_value
-        
+
         return processed
 
     def _cleanup_old_metrics(self) -> None:
@@ -485,94 +484,94 @@ class MetricsCollector:
         try:
             with self._lock:
                 metrics_to_cleanup = list(self.metrics.items())
-            
+
             # Process cleanup outside of lock for better performance
             for metric_name, values in metrics_to_cleanup:
                 if not values:
                     continue
-                
+
                 original_count = len(values)
-                
+
                 # Efficient cleanup using list comprehension
                 recent_values = [
-                    value for value in values 
+                    value for value in values
                     if value.timestamp >= cutoff_time
                 ]
-                
+
                 # Apply compression if enabled and beneficial
-                if (self.enable_compression and 
-                    len(recent_values) > 100 and 
+                if (self.enable_compression and
+                    len(recent_values) > MIN_VALUES_FOR_COMPRESSION and
                     len(recent_values) < original_count * 0.8):
-                    
+
                     compressed_values = self._compress_metric_values(recent_values)
                     if compressed_values is not None:
                         recent_values = compressed_values
                         compressed_count += 1
-                
+
                 # Update storage with new deque
                 new_deque = deque(recent_values, maxlen=self.max_values_per_metric)
-                
+
                 with self._lock:
                     self.metrics[metric_name] = new_deque
-                
+
                 cleaned_count += original_count - len(recent_values)
-            
+
             # Update cleanup tracking
             self._last_cleanup = time.time()
             cleanup_duration = (time.perf_counter() - start_time) * 1000
-            
+
             if cleaned_count > 0 or compressed_count > 0:
                 logger.debug("Metrics cleanup completed",
                            cleaned_count=cleaned_count,
                            compressed_count=compressed_count,
                            duration_ms=cleanup_duration)
-            
+
         except Exception as e:
             logger.error("Error during metrics cleanup", error=str(e))
-    
-    def _compress_metric_values(self, values: List[MetricValue]) -> Optional[List[MetricValue]]:
+
+    def _compress_metric_values(self, values: list[MetricValue]) -> list[MetricValue] | None:
         """Compress metric values by downsampling.
-        
+
         Args:
             values: List of metric values to compress
-            
+
         Returns:
             Compressed list of metric values or None if compression failed
         """
         try:
-            if len(values) < 100:
+            if len(values) < MIN_VALUES_FOR_COMPRESSION:
                 return None
-            
+
             # Simple downsampling: keep every nth value plus min/max in windows
             compressed = []
             window_size = max(10, len(values) // 50)  # Target ~50 samples
-            
+
             for i in range(0, len(values), window_size):
                 window = values[i:i + window_size]
                 if not window:
                     continue
-                
+
                 # Keep first, last, min, and max from each window
                 window_values = [v.value for v in window]
                 min_idx = i + np.argmin(window_values)
                 max_idx = i + np.argmax(window_values)
-                
+
                 # Add unique indices
                 indices_to_keep = {i, i + len(window) - 1, min_idx, max_idx}
                 for idx in sorted(indices_to_keep):
                     if idx < len(values):
                         compressed.append(values[idx])
-            
+
             # Update compression stats
             original_size = len(values)
             compressed_size = len(compressed)
-            
+
             self._compression_stats['compressed_count'] += 1
             self._compression_stats['original_size'] += original_size
             self._compression_stats['compressed_size'] += compressed_size
-            
+
             return compressed if compressed_size < original_size * 0.8 else None
-            
+
         except Exception as e:
             logger.warning("Metric compression failed", error=str(e))
             return None
@@ -580,20 +579,20 @@ class MetricsCollector:
     def get_metric_values(
         self,
         name: str,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        labels: Optional[Dict[str, str]] = None,
-        limit: Optional[int] = None
-    ) -> List[MetricValue]:
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        labels: dict[str, str] | None = None,
+        limit: int | None = None
+    ) -> list[MetricValue]:
         """Get metric values with optimized filtering.
-        
+
         Args:
             name: Metric name
             start_time: Start time filter
-            end_time: End time filter 
+            end_time: End time filter
             labels: Label filters
             limit: Maximum number of values to return
-            
+
         Returns:
             List of matching metric values
         """
@@ -606,23 +605,23 @@ class MetricsCollector:
 
         # Optimize filtering with early termination
         filtered_values = []
-        
+
         for value in values:
             # Time range filter
             if start_time and value.timestamp < start_time:
                 continue
             if end_time and value.timestamp > end_time:
                 continue
-                
+
             # Label filter with short-circuit evaluation
             if labels:
                 if not value.labels:
                     continue
                 if not all(value.labels.get(k) == v for k, v in labels.items()):
                     continue
-            
+
             filtered_values.append(value)
-            
+
             # Early termination if limit reached
             if limit and len(filtered_values) >= limit:
                 break
@@ -630,20 +629,20 @@ class MetricsCollector:
         return filtered_values
 
     def get_metric_summary(
-        self, 
-        name: str, 
-        start_time: Optional[datetime] = None, 
-        end_time: Optional[datetime] = None,
-        labels: Optional[Dict[str, str]] = None
-    ) -> Dict[str, Union[float, int]]:
+        self,
+        name: str,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        labels: dict[str, str] | None = None
+    ) -> dict[str, float | int]:
         """Get comprehensive summary statistics for a metric.
-        
+
         Args:
             name: Metric name
             start_time: Start time filter
             end_time: End time filter
             labels: Label filters
-            
+
         Returns:
             Dictionary of statistics
         """
@@ -669,41 +668,41 @@ class MetricsCollector:
             "median": float(np.median(np_values)),
             "std": float(np.std(np_values)),
         }
-        
+
         # Add percentiles if we have enough data
-        if len(numeric_values) >= 5:
+        if len(numeric_values) >= MIN_PERCENTILE_VALUES:
             summary.update({
                 "p25": float(np.percentile(np_values, 25)),
                 "p75": float(np.percentile(np_values, 75)),
                 "p95": float(np.percentile(np_values, 95)),
                 "p99": float(np.percentile(np_values, 99)),
             })
-        
+
         # Add rate if duration is available
         if duration_seconds > 0:
             summary["rate_per_second"] = summary["sum"] / duration_seconds
-        
+
         # Add data quality metrics
         summary["latest_value"] = float(values[-1].value) if values else 0.0
         summary["oldest_timestamp"] = values[0].timestamp.isoformat() if values else None
         summary["latest_timestamp"] = values[-1].timestamp.isoformat() if values else None
 
         return summary
-    
-    def get_performance_stats(self) -> Dict[str, Any]:
+
+    def get_performance_stats(self) -> dict[str, Any]:
         """Get performance statistics for the collector.
-        
+
         Returns:
             Dictionary of performance metrics
         """
         with self._lock:
             total_metrics = len(self.metrics)
             total_values = sum(len(values) for values in self.metrics.values())
-        
+
         avg_record_time = (
             statistics.mean(self._record_times) if self._record_times else 0.0
         )
-        
+
         return {
             "total_metrics": total_metrics,
             "total_values": total_values,
@@ -714,10 +713,10 @@ class MetricsCollector:
             "max_values_per_metric": self.max_values_per_metric,
             "cleanup_interval_seconds": self.cleanup_interval,
         }
-    
+
     def _estimate_memory_usage(self) -> float:
         """Estimate memory usage of stored metrics in MB.
-        
+
         Returns:
             Estimated memory usage in megabytes
         """
@@ -726,13 +725,13 @@ class MetricsCollector:
             # (datetime=24, float=8, string overhead, labels, etc.)
             with self._lock:
                 total_values = sum(len(values) for values in self.metrics.values())
-            
+
             estimated_bytes = total_values * 200
             return estimated_bytes / (1024 * 1024)  # Convert to MB
-            
+
         except Exception:
             return 0.0
-    
+
     def cleanup(self) -> None:
         """Clean up resources and shutdown thread pool."""
         try:
@@ -744,7 +743,7 @@ class MetricsCollector:
 
 class AlertManager:
     """Enhanced alert manager with async support and performance optimizations.
-    
+
     This manager provides:
     - Asynchronous rule evaluation
     - Efficient alert deduplication
@@ -754,14 +753,14 @@ class AlertManager:
     """
 
     def __init__(
-        self, 
+        self,
         metrics_collector: MetricsCollector,
         evaluation_interval: int = 30,
         max_alert_history: int = 10000,
         enable_correlation: bool = True
     ) -> None:
         """Initialize alert manager with enhanced features.
-        
+
         Args:
             metrics_collector: MetricsCollector instance
             evaluation_interval: How often to evaluate rules (seconds)
@@ -771,41 +770,41 @@ class AlertManager:
         self.metrics_collector = metrics_collector
         self.evaluation_interval = evaluation_interval
         self.enable_correlation = enable_correlation
-        
+
         # Thread-safe storage
-        self.alert_rules: Dict[str, AlertRule] = {}
-        self.active_alerts: Dict[str, Alert] = {}  # fingerprint -> alert
+        self.alert_rules: dict[str, AlertRule] = {}
+        self.active_alerts: dict[str, Alert] = {}  # fingerprint -> alert
         self.alert_history: deque = deque(maxlen=max_alert_history)
-        self.notification_callbacks: List[Callable[[Alert], None]] = []
+        self.notification_callbacks: list[Callable[[Alert], None]] = []
         self._lock = threading.RLock()
-        
+
         # Alert correlation and grouping
-        self.alert_groups: Dict[str, List[str]] = {}  # group_key -> alert_fingerprints
-        self.suppressed_alerts: Set[str] = set()
-        
+        self.alert_groups: dict[str, list[str]] = {}  # group_key -> alert_fingerprints
+        self.suppressed_alerts: set[str] = set()
+
         # Performance tracking
         self.evaluation_count = 0
-        self.last_evaluation_time: Optional[datetime] = None
+        self.last_evaluation_time: datetime | None = None
         self.evaluation_duration_history: deque = deque(maxlen=100)
-        
+
         # Background task management
-        self._evaluation_task: Optional[asyncio.Task] = None
+        self._evaluation_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
-        
-        logger.info("AlertManager initialized", 
+
+        logger.info("AlertManager initialized",
                    evaluation_interval=evaluation_interval,
                    max_alert_history=max_alert_history)
 
         # Setup default alert rules
         self._setup_default_alerts()
-        
+
     def __del__(self) -> None:
         """Cleanup on deletion."""
         try:
             if hasattr(self, '_evaluation_task') and self._evaluation_task:
                 self._evaluation_task.cancel()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to cancel evaluation task during cleanup", error=str(e))
 
     def _setup_default_alerts(self) -> None:
         """Setup default alert rules with enhanced configuration."""
@@ -880,7 +879,7 @@ class AlertManager:
             try:
                 self.add_alert_rule(rule)
             except Exception as e:
-                logger.error("Failed to add default alert rule", 
+                logger.error("Failed to add default alert rule",
                            rule_name=rule.name, error=str(e))
 
     async def start_evaluation(self) -> None:
@@ -888,42 +887,42 @@ class AlertManager:
         if self._evaluation_task and not self._evaluation_task.done():
             logger.warning("Alert evaluation already running")
             return
-        
+
         self._shutdown_event.clear()
         self._evaluation_task = asyncio.create_task(
             self._evaluation_loop(),
             name="alert_manager_evaluation"
         )
         logger.info("Alert evaluation started")
-    
+
     async def stop_evaluation(self) -> None:
         """Stop the background alert evaluation task."""
         self._shutdown_event.set()
-        
+
         if self._evaluation_task:
             self._evaluation_task.cancel()
             try:
                 await asyncio.wait_for(self._evaluation_task, timeout=10.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 logger.warning("Alert evaluation task cancellation timed out")
-        
+
         logger.info("Alert evaluation stopped")
-    
+
     async def _evaluation_loop(self) -> None:
         """Main evaluation loop running in background."""
         logger.info("Starting alert evaluation loop")
-        
+
         while not self._shutdown_event.is_set():
             try:
                 start_time = time.perf_counter()
                 await self._evaluate_all_rules()
-                
+
                 # Track evaluation performance
                 duration = (time.perf_counter() - start_time) * 1000
                 self.evaluation_duration_history.append(duration)
                 self.evaluation_count += 1
                 self.last_evaluation_time = datetime.now()
-                
+
                 # Wait for next evaluation
                 try:
                     await asyncio.wait_for(
@@ -931,46 +930,46 @@ class AlertManager:
                         timeout=self.evaluation_interval
                     )
                     break  # Shutdown requested
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue  # Normal timeout, continue evaluation
-                    
+
             except asyncio.CancelledError:
                 logger.info("Alert evaluation loop cancelled")
                 break
             except Exception as e:
                 logger.error("Error in alert evaluation loop", error=str(e))
                 await asyncio.sleep(min(self.evaluation_interval, 60))
-        
+
         logger.info("Alert evaluation loop ended")
-    
+
     async def _evaluate_all_rules(self) -> None:
         """Evaluate all alert rules against current metrics."""
         with self._lock:
             rules_to_evaluate = [(name, rule) for name, rule in self.alert_rules.items() if rule.enabled]
-        
+
         if not rules_to_evaluate:
             return
-        
+
         # Evaluate rules concurrently for better performance
         tasks = [
             self._evaluate_single_rule(rule_name, rule)
             for rule_name, rule in rules_to_evaluate
         ]
-        
+
         # Use gather with return_exceptions to handle individual rule failures
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         # Log any rule evaluation errors
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 rule_name = rules_to_evaluate[i][0]
-                logger.error("Rule evaluation failed", 
-                           rule_name=rule_name, 
+                logger.error("Rule evaluation failed",
+                           rule_name=rule_name,
                            error=str(result))
-    
+
     async def _evaluate_single_rule(self, rule_name: str, rule: AlertRule) -> None:
         """Evaluate a single alert rule asynchronously.
-        
+
         Args:
             rule_name: Name of the rule
             rule: AlertRule to evaluate
@@ -979,7 +978,7 @@ class AlertManager:
             # Get recent metric values
             end_time = datetime.now()
             start_time = end_time - timedelta(seconds=300)  # 5 minute window
-            
+
             values = self.metrics_collector.get_metric_values(
                 rule.metric_name,
                 start_time=start_time,
@@ -987,115 +986,110 @@ class AlertManager:
                 labels=rule.labels,
                 limit=1000  # Limit to prevent performance issues
             )
-            
+
             if not values:
                 # No data - resolve any existing alerts for this rule
                 await self._resolve_alerts_for_rule(rule_name)
                 return
-            
+
             # Calculate aggregated value
             aggregated_value = self._calculate_aggregate(values, rule.aggregation)
-            
+
             # Check condition
             condition_met = self._evaluate_condition(aggregated_value, rule.condition)
-            
+
             if condition_met:
                 await self._handle_condition_met(rule, aggregated_value)
             else:
                 await self._handle_condition_resolved(rule_name)
-                
+
         except Exception as e:
             logger.error("Error evaluating rule", rule_name=rule_name, error=str(e))
-    
-    def _calculate_aggregate(self, values: List[MetricValue], aggregation: str) -> float:
+
+    def _calculate_aggregate(self, values: list[MetricValue], aggregation: str) -> float:
         """Calculate aggregated value from metric values.
-        
+
         Args:
             values: List of metric values
             aggregation: Aggregation method
-            
+
         Returns:
             Aggregated value
         """
         if not values:
             return 0.0
-        
+
         numeric_values = [v.value for v in values]
         np_values = np.array(numeric_values)
-        
-        if aggregation == "avg":
-            return float(np.mean(np_values))
-        elif aggregation == "max":
-            return float(np.max(np_values))
-        elif aggregation == "min":
-            return float(np.min(np_values))
-        elif aggregation == "sum":
-            return float(np.sum(np_values))
-        elif aggregation == "count":
-            return float(len(numeric_values))
-        elif aggregation == "p95":
-            return float(np.percentile(np_values, 95))
-        elif aggregation == "p99":
-            return float(np.percentile(np_values, 99))
-        else:
-            # Default to average
-            return float(np.mean(np_values))
-    
+
+        # Dictionary dispatch pattern for aggregation methods
+        aggregation_methods = {
+            "avg": lambda: float(np.mean(np_values)),
+            "max": lambda: float(np.max(np_values)),
+            "min": lambda: float(np.min(np_values)),
+            "sum": lambda: float(np.sum(np_values)),
+            "count": lambda: float(len(numeric_values)),
+            "p95": lambda: float(np.percentile(np_values, 95)),
+            "p99": lambda: float(np.percentile(np_values, 99)),
+        }
+
+        # Get the aggregation method or default to average
+        method = aggregation_methods.get(aggregation, lambda: float(np.mean(np_values)))
+        return method()
+
     def _evaluate_condition(self, value: float, condition: str) -> bool:
         """Evaluate if a condition is met.
-        
+
         Args:
             value: Current metric value
             condition: Condition string (e.g., "> 100")
-            
+
         Returns:
             True if condition is met
         """
         try:
             condition = condition.strip()
-            
-            if condition.startswith("> "):
-                threshold = float(condition[2:])
-                return value > threshold
-            elif condition.startswith("< "):
-                threshold = float(condition[2:])
-                return value < threshold
-            elif condition.startswith(">= "):
-                threshold = float(condition[3:])
-                return value >= threshold
-            elif condition.startswith("<= "):
-                threshold = float(condition[3:])
-                return value <= threshold
-            elif condition.startswith("== "):
-                threshold = float(condition[3:])
-                return abs(value - threshold) < 1e-9
-            elif condition.startswith("!= "):
-                threshold = float(condition[3:])
-                return abs(value - threshold) >= 1e-9
-            else:
-                logger.warning("Unknown condition format", condition=condition)
-                return False
-                
+
+            # Dictionary of operator patterns and their evaluation functions
+            operators = {
+                "> ": (2, lambda v, t: v > t),
+                "< ": (2, lambda v, t: v < t),
+                ">= ": (3, lambda v, t: v >= t),
+                "<= ": (3, lambda v, t: v <= t),
+                "== ": (3, lambda v, t: abs(v - t) < FLOAT_COMPARISON_PRECISION),
+                "!= ": (3, lambda v, t: abs(v - t) >= FLOAT_COMPARISON_PRECISION),
+            }
+
+            # Find matching operator
+            for op_str, (offset, evaluator) in operators.items():
+                if condition.startswith(op_str):
+                    threshold = float(condition[offset:])
+                    return evaluator(value, threshold)
+
+            # No matching operator found
+            logger.warning("Unknown condition format", condition=condition)
+            return False
+
         except (ValueError, IndexError) as e:
             logger.error("Error evaluating condition", condition=condition, error=str(e))
             return False
-    
+
     async def _handle_condition_met(self, rule: AlertRule, value: float) -> None:
         """Handle when an alert condition is met.
-        
+
         Args:
             rule: AlertRule that was triggered
             value: Current metric value
         """
         # Generate alert fingerprint for deduplication
         fingerprint = self._generate_alert_fingerprint(rule)
-        
+
         with self._lock:
             if fingerprint in self.active_alerts:
                 # Update existing alert
                 self.active_alerts[fingerprint].value = value
                 return
-            
+
             # Create new alert
             alert = Alert(
                 id=str(uuid.uuid4()),
@@ -1109,110 +1103,110 @@ class AlertManager:
                 labels=rule.labels.copy() if rule.labels else {},
                 fingerprint=fingerprint
             )
-            
+
             self.active_alerts[fingerprint] = alert
             self.alert_history.append(alert)
-            
+
             # Notify callbacks
             for callback in self.notification_callbacks:
                 try:
                     callback(alert)
                 except Exception as e:
                     logger.error("Notification callback failed", error=str(e))
-            
-            logger.warning("Alert fired", 
+
+            logger.warning("Alert fired",
                           rule_name=rule.name,
                           metric_name=rule.metric_name,
                           value=value,
                           condition=rule.condition,
                           fingerprint=fingerprint)
-    
+
     async def _handle_condition_resolved(self, rule_name: str) -> None:
         """Handle when an alert condition is resolved.
-        
+
         Args:
             rule_name: Name of the rule
         """
         await self._resolve_alerts_for_rule(rule_name)
-    
+
     async def _resolve_alerts_for_rule(self, rule_name: str) -> None:
         """Resolve all active alerts for a specific rule.
-        
+
         Args:
             rule_name: Name of the rule
         """
         alerts_to_resolve = []
-        
+
         with self._lock:
             for fingerprint, alert in list(self.active_alerts.items()):
                 if alert.rule_name == rule_name:
                     alert.resolved_at = datetime.now()
                     alerts_to_resolve.append((fingerprint, alert))
                     del self.active_alerts[fingerprint]
-        
+
         for fingerprint, alert in alerts_to_resolve:
-            logger.info("Alert resolved", 
+            logger.info("Alert resolved",
                        rule_name=rule_name,
                        fingerprint=fingerprint,
                        duration=alert.duration)
-    
+
     def _generate_alert_fingerprint(self, rule: AlertRule) -> str:
         """Generate unique fingerprint for alert deduplication.
-        
+
         Args:
             rule: AlertRule
-            
+
         Returns:
             Unique fingerprint string
         """
         import hashlib
-        
+
         # Create fingerprint from rule name and labels
         content = f"{rule.name}:{rule.metric_name}"
         if rule.labels:
             sorted_labels = sorted(rule.labels.items())
             content += f":{sorted_labels}"
-        
-        return hashlib.md5(content.encode()).hexdigest()[:8]
-    
+
+        return hashlib.sha256(content.encode(), usedforsecurity=False).hexdigest()[:8]
+
     def add_alert_rule(self, rule: AlertRule) -> None:
         """Add an alert rule with validation.
-        
+
         Args:
             rule: AlertRule to add
-            
+
         Raises:
             ValueError: If rule name already exists or rule is invalid
         """
         if not isinstance(rule, AlertRule):
             raise ValueError("Expected AlertRule instance")
-        
+
         with self._lock:
             if rule.name in self.alert_rules:
                 raise ValueError(f"Alert rule '{rule.name}' already exists")
-            
+
             self.alert_rules[rule.name] = rule
-        
+
         logger.info("Alert rule added", rule_name=rule.name, metric=rule.metric_name)
 
     async def remove_alert_rule(self, rule_name: str) -> bool:
         """Remove an alert rule and resolve its alerts.
-        
+
         Args:
             rule_name: Name of the rule to remove
-            
+
         Returns:
             True if rule was removed, False if not found
         """
         with self._lock:
             if rule_name not in self.alert_rules:
                 return False
-            
+
             del self.alert_rules[rule_name]
-        
+
         # Resolve any active alerts for this rule
         await self._resolve_alerts_for_rule(rule_name)
-        
+
         logger.info("Alert rule removed", rule_name=rule_name)
         return True
 
@@ -1263,11 +1257,11 @@ class AlertManager:
                     try:
                         callback(alert)
                     except Exception as e:
-                        logger.error(f"Notification callback failed: {e}")
+                        logger.error("Notification callback failed: %s", e)
 
                 logger.warning(
-                    f"ALERT: {rule.name} - {rule.description} "
-                    f"(value: {values[-1].value}, threshold: {rule.condition})"
+                    "ALERT: %s - %s (value: %s, threshold: %s)",
+                    rule.name, rule.description, values[-1].value, rule.condition
                 )
         elif rule.name in self.active_alerts:
             # Resolve alert
@@ -1275,9 +1269,9 @@ class AlertManager:
             alert.resolved_at = current_time
             del self.active_alerts[rule.name]
 
-            logger.info(f"RESOLVED: {rule.name}")
+            logger.info("RESOLVED: %s", rule.name)
 
-    def _evaluate_condition(self, values: List[MetricValue], condition: str) -> bool:
+    def _evaluate_condition(self, values: list[MetricValue], condition: str) -> bool:
         """Evaluate if metric values meet the alert condition."""
         if not values:
             return False
@@ -1285,31 +1279,29 @@ class AlertManager:
         # For simplicity, check if the latest value meets the condition
         latest_value = values[-1].value
 
-        # Parse condition (e.g., "> 100", "< 0.5")
-        if condition.startswith("> "):
-            threshold = float(condition[2:])
-            return latest_value > threshold
-        elif condition.startswith("< "):
-            threshold = float(condition[2:])
-            return latest_value < threshold
-        elif condition.startswith(">= "):
-            threshold = float(condition[3:])
-            return latest_value >= threshold
-        elif condition.startswith("<= "):
-            threshold = float(condition[3:])
-            return latest_value <= threshold
-        elif condition.startswith("== "):
-            threshold = float(condition[3:])
-            return latest_value == threshold
+        # Dictionary of operator patterns and their evaluation functions
+        operators = {
+            "> ": (2, lambda v, t: v > t),
+            "< ": (2, lambda v, t: v < t),
+            ">= ": (3, lambda v, t: v >= t),
+            "<= ": (3, lambda v, t: v <= t),
+            "== ": (3, lambda v, t: v == t),
+        }
+
+        # Find matching operator
+        for op_str, (offset, evaluator) in operators.items():
+            if condition.startswith(op_str):
+                threshold = float(condition[offset:])
+                return evaluator(latest_value, threshold)
 
         return False
 
-    def get_active_alerts(self) -> List[Alert]:
+    def get_active_alerts(self) -> list[Alert]:
         """Get all active alerts."""
         with self.lock:
             return list(self.active_alerts.values())
 
-    def get_alert_history(self, limit: int = 100) -> List[Alert]:
+    def get_alert_history(self, limit: int = 100) -> list[Alert]:
         """Get alert history."""
         with self.lock:
             return list(self.alert_history)[-limit:]
@@ -1354,7 +1346,7 @@ class SystemMetricsCollector:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error collecting metrics: {e}")
+                logger.error("Error collecting metrics: %s", e)
                 await asyncio.sleep(5)  # Brief pause before retrying
 
     async def _collect_system_metrics(self):
@@ -1489,7 +1481,7 @@ class SystemMetricsCollector:
                 self.metrics_collector.record_metric("active_users", active_users or 0)
 
         except Exception as e:
-            logger.error(f"Error collecting database metrics: {e}")
+            logger.error("Error collecting database metrics: %s", e)
 
 
 class PerformanceProfiler:
@@ -1501,7 +1493,7 @@ class PerformanceProfiler:
         self.lock = threading.Lock()
 
     def start_operation(
-        self, operation_id: str, operation_type: str, metadata: Optional[Dict[str, str]] = None
+        self, operation_id: str, operation_type: str, metadata: dict[str, str] | None = None
     ) -> str:
         """Start timing an operation."""
         with self.lock:
@@ -1516,7 +1508,7 @@ class PerformanceProfiler:
         self,
         operation_id: str,
         success: bool = True,
-        additional_metrics: Optional[Dict[str, float]] = None,
+        additional_metrics: dict[str, float] | None = None,
     ):
         """End timing an operation and record metrics."""
         with self.lock:
@@ -1541,7 +1533,7 @@ class PerformanceProfiler:
                     self.metrics_collector.record_metric(metric_name, value, labels)
 
     def profile_async_function(
-        self, operation_type: str, metadata: Optional[Dict[str, str]] = None
+        self, operation_type: str, metadata: dict[str, str] | None = None
     ):
         """Decorator to profile async functions."""
 
@@ -1607,7 +1599,7 @@ class MetricsExporter:
             # Store export loop task to avoid "coroutine was never awaited" warning
             self.export_task = asyncio.create_task(self._prometheus_export_loop())
 
-            logger.info(f"Prometheus exporter started on port {port}")
+            logger.info("Prometheus exporter started on port %s", port)
 
         except ImportError:
             logger.warning(
@@ -1645,12 +1637,12 @@ class MetricsExporter:
                             try:
                                 prometheus_metric.set(latest_value.value)
                             except Exception as e:
-                                logger.debug(f"Could not set metric {metric_name}: {e}")
+                                logger.debug("Could not set metric {metric_name}: %s", e)
 
                 await asyncio.sleep(30)  # Export every 30 seconds
 
             except Exception as e:
-                logger.error(f"Prometheus export error: {e}")
+                logger.error("Prometheus export error: %s", e)
                 await asyncio.sleep(60)
 
 
@@ -1672,7 +1664,6 @@ class MonitoringDashboard:
         """Start the web dashboard."""
         try:
             from aiohttp import web
-            from aiohttp import web_response
 
             self.app = web.Application()
 
@@ -1690,7 +1681,7 @@ class MonitoringDashboard:
             site = web.TCPSite(runner, "localhost", self.port)
             await site.start()
 
-            logger.info(f"Monitoring dashboard started on http://localhost:{self.port}")
+            logger.info("Monitoring dashboard started on http://localhost:%s", self.port)
 
         except ImportError:
             logger.warning("aiohttp not available, skipping web dashboard")
@@ -1861,7 +1852,7 @@ class MonitoringDashboard:
 class MonitoringSystem:
     """Complete monitoring system for mem0ai."""
 
-    def __init__(self, db_url: str, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, db_url: str, config: dict[str, Any] | None = None):
         self.db_url = db_url
         self.config = config or {}
         self.pool = None
@@ -1936,14 +1927,14 @@ class MonitoringSystem:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Error checking alerts: {e}")
+                logger.error("Error checking alerts: %s", e)
                 await asyncio.sleep(60)
 
     def get_profiler(self) -> PerformanceProfiler:
         """Get the performance profiler."""
         return self.profiler
 
-    def record_metric(self, name: str, value: float, labels: Optional[Dict[str, str]] = None):
+    def record_metric(self, name: str, value: float, labels: dict[str, str] | None = None):
         """Record a metric value."""
         self.metrics_collector.record_metric(name, value, labels)
 
@@ -1953,11 +1944,11 @@ async def main():
     """Test the monitoring system."""
     import os
 
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
 
     config = {"retention_hours": 24, "dashboard_port": 8080, "prometheus_port": 8000}
 
-    monitoring = MonitoringSystem(DB_URL, config)
+    monitoring = MonitoringSystem(db_url, config)
 
     try:
         await monitoring.initialize()

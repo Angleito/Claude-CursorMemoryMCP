@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Production-grade Embedding Generation Pipeline for mem0ai
+"""Production-grade Embedding Generation Pipeline for mem0ai.
+
 Supports multiple embedding models with optimized batch processing and caching.
 """
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
-import pickle
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
+from datetime import timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Union
 
 import asyncpg
 import cohere
@@ -24,7 +25,8 @@ import tiktoken
 import torch
 from openai import AsyncOpenAI
 from sentence_transformers import SentenceTransformer
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel
+from transformers import AutoTokenizer
 
 # Configure logging
 logging.basicConfig(
@@ -56,10 +58,10 @@ class EmbeddingConfig:
     cache_ttl_hours: int = 24
     retry_attempts: int = 3
     retry_delay: float = 1.0
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     @classmethod
-    def get_default_configs(cls) -> Dict[str, "EmbeddingConfig"]:
+    def get_default_configs(cls) -> dict[str, "EmbeddingConfig"]:
         """Get default configurations for different providers."""
         return {
             "openai_ada002": cls(
@@ -127,8 +129,8 @@ class EmbeddingRequest:
 
     text: str
     user_id: str
-    memory_id: Optional[str] = None
-    metadata: Optional[Dict] = None
+    memory_id: str | None = None
+    metadata: dict | None = None
     priority: int = 1  # 1=high, 2=medium, 3=low
 
 
@@ -145,8 +147,8 @@ class EmbeddingResult:
     cache_hit: bool
     timestamp: datetime
     user_id: str
-    memory_id: Optional[str] = None
-    metadata: Optional[Dict] = None
+    memory_id: str | None = None
+    metadata: dict | None = None
 
 
 class RateLimiter:
@@ -195,7 +197,7 @@ class EmbeddingCache:
         combined = f"{model_name}:{text}"
         return f"embedding:{hashlib.sha256(combined.encode()).hexdigest()}"
 
-    async def get(self, text: str, model_name: str) -> Optional[np.ndarray]:
+    async def get(self, text: str, model_name: str) -> np.ndarray | None:
         """Get cached embedding."""
         if not self.redis_client:
             return None
@@ -204,14 +206,14 @@ class EmbeddingCache:
             key = await self.get_cache_key(text, model_name)
             cached_data = await self.redis_client.get(key)
             if cached_data:
-                embedding_list = pickle.loads(cached_data)
+                embedding_list = json.loads(cached_data.decode('utf-8'))
                 return np.array(embedding_list, dtype=np.float32)
         except Exception as e:
-            logger.warning(f"Cache get error: {e}")
+            logger.warning("Cache get error: %s", e)
         return None
 
     async def set(
-        self, text: str, model_name: str, embedding: Union[np.ndarray, List[float]], ttl_hours: int = 24
+        self, text: str, model_name: str, embedding: np.ndarray | list[float], ttl_hours: int = 24
     ) -> None:
         """Cache embedding."""
         if not self.redis_client:
@@ -224,10 +226,10 @@ class EmbeddingCache:
                 embedding_list = embedding.tolist()
             else:
                 embedding_list = embedding
-            data = pickle.dumps(embedding_list)
+            data = json.dumps(embedding_list).encode('utf-8')
             await self.redis_client.setex(key, timedelta(hours=ttl_hours), data)
         except Exception as e:
-            logger.warning(f"Cache set error: {e}")
+            logger.warning("Cache set error: %s", e)
 
     async def clear_expired(self):
         """Clear expired cache entries (handled by Redis TTL)."""
@@ -246,7 +248,7 @@ class BaseEmbeddingProvider:
         self.cache = cache
         self.rate_limiter = RateLimiter(config.rate_limit_rpm)
 
-    async def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for list of texts."""
         raise NotImplementedError
 
@@ -279,7 +281,7 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
         super().__init__(config, cache)
         self.client = AsyncOpenAI(api_key=config.api_key or os.getenv("OPENAI_API_KEY"))
 
-    async def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings using OpenAI API."""
         await self.rate_limiter.acquire()
 
@@ -292,14 +294,14 @@ class OpenAIEmbeddingProvider(BaseEmbeddingProvider):
             )
 
             embeddings = np.array(
-                [data.embedding for data in response.data], 
+                [data.embedding for data in response.data],
                 dtype=np.float32
             )
 
             return embeddings
 
         except Exception as e:
-            logger.error(f"OpenAI embedding error: {e}")
+            logger.error("OpenAI embedding error: %s", e)
             raise
 
 
@@ -310,7 +312,7 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
         super().__init__(config, cache)
         self.client = cohere.AsyncClient(config.api_key or os.getenv("COHERE_API_KEY"))
 
-    async def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings using Cohere API."""
         await self.rate_limiter.acquire()
 
@@ -327,7 +329,7 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
             return np.array(response.embeddings, dtype=np.float32)
 
         except Exception as e:
-            logger.error(f"Cohere embedding error: {e}")
+            logger.error("Cohere embedding error: %s", e)
             raise
 
 
@@ -348,7 +350,7 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
                     if torch.cuda.is_available():
                         self.model = self.model.cuda()
 
-    async def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings using SentenceTransformers."""
         self._load_model()
 
@@ -366,7 +368,7 @@ class SentenceTransformerProvider(BaseEmbeddingProvider):
             return embeddings.astype(np.float32)
 
         except Exception as e:
-            logger.error(f"SentenceTransformer embedding error: {e}")
+            logger.error("SentenceTransformer embedding error: %s", e)
             raise
 
 
@@ -391,7 +393,7 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
                     if torch.cuda.is_available():
                         self.model = self.model.cuda()
 
-    async def _encode_batch(self, texts: List[str]) -> np.ndarray:
+    async def _encode_batch(self, texts: list[str]) -> np.ndarray:
         """Encode batch of texts."""
         self._load_model()
 
@@ -415,7 +417,7 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
 
         return embeddings.cpu().numpy().astype(np.float32)
 
-    async def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    async def generate_embeddings(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings using HuggingFace transformers."""
         try:
             # Run in thread pool to avoid blocking event loop
@@ -428,7 +430,7 @@ class HuggingFaceEmbeddingProvider(BaseEmbeddingProvider):
             return embeddings
 
         except Exception as e:
-            logger.error(f"HuggingFace embedding error: {e}")
+            logger.error("HuggingFace embedding error: %s", e)
             raise
 
 
@@ -471,9 +473,9 @@ class EmbeddingPipeline:
                         config, self.cache
                     )
 
-                logger.info(f"Initialized provider: {name}")
+                logger.info("Initialized provider: %s", name)
             except Exception as e:
-                logger.warning(f"Failed to initialize provider {name}: {e}")
+                logger.warning("Failed to initialize provider {name}: %s", e)
 
         # Set default provider
         if "openai_ada002" in self.providers:
@@ -492,15 +494,15 @@ class EmbeddingPipeline:
             await self.db_pool.close()
 
     async def generate_embedding(
-        self, request: EmbeddingRequest, provider_name: Optional[str] = None
+        self, request: EmbeddingRequest, provider_name: str | None = None
     ) -> EmbeddingResult:
         """Generate single embedding."""
         results = await self.generate_embeddings([request], provider_name)
         return results[0]
 
     async def generate_embeddings(
-        self, requests: List[EmbeddingRequest], provider_name: Optional[str] = None
-    ) -> List[EmbeddingResult]:
+        self, requests: list[EmbeddingRequest], provider_name: str | None = None
+    ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple requests."""
         if not requests:
             return []
@@ -560,7 +562,7 @@ class EmbeddingPipeline:
 
                     # Create results and cache embeddings
                     for _j, ((orig_idx, request), embedding) in enumerate(
-                        zip(batch, embeddings)
+                        zip(batch, embeddings, strict=False)
                     ):
                         result = EmbeddingResult(
                             text=request.text,
@@ -587,7 +589,7 @@ class EmbeddingPipeline:
                         )
 
                 except Exception as e:
-                    logger.error(f"Batch embedding generation failed: {e}")
+                    logger.error("Batch embedding generation failed: %s", e)
                     # Create error results
                     for orig_idx, request in batch:
                         results[orig_idx] = EmbeddingResult(
@@ -606,7 +608,7 @@ class EmbeddingPipeline:
 
         return results
 
-    async def store_embeddings(self, results: List[EmbeddingResult]) -> List[str]:
+    async def store_embeddings(self, results: list[EmbeddingResult]) -> list[str]:
         """Store embeddings in database."""
         stored_ids = []
 
@@ -642,7 +644,7 @@ class EmbeddingPipeline:
 
         return stored_ids
 
-    async def get_available_providers(self) -> Dict[str, Dict]:
+    async def get_available_providers(self) -> dict[str, dict]:
         """Get information about available providers."""
         provider_info = {}
         for name, provider in self.providers.items():
@@ -656,7 +658,7 @@ class EmbeddingPipeline:
             }
         return provider_info
 
-    async def benchmark_providers(self, test_texts: List[str]) -> Dict[str, Dict]:
+    async def benchmark_providers(self, test_texts: list[str]) -> dict[str, dict]:
         """Benchmark all available providers."""
         benchmark_results = {}
 
@@ -700,11 +702,11 @@ class EmbeddingPipeline:
 async def main():
     """Main function for testing the pipeline."""
     # Database configuration
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 
     # Initialize pipeline
-    pipeline = EmbeddingPipeline(DB_URL, REDIS_URL)
+    pipeline = EmbeddingPipeline(db_url, redis_url)
 
     try:
         await pipeline.initialize()
@@ -743,7 +745,7 @@ async def main():
         await pipeline.store_embeddings(results)
 
     except Exception as e:
-        logger.error(f"Pipeline error: {e}")
+        logger.error("Pipeline error: %s", e)
         raise
     finally:
         await pipeline.cleanup()

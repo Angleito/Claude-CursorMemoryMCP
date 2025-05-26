@@ -4,8 +4,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any
-from typing import Dict
-from typing import Optional
 
 import psycopg2
 import redis
@@ -73,7 +71,7 @@ async def lifespan(app: FastAPI):
         logging.info("Application initialized successfully")
 
     except Exception as e:
-        logging.error(f"Failed to initialize application: {e}")
+        logging.error("Failed to initialize application", error=str(e))
         raise
 
     yield
@@ -141,7 +139,7 @@ async def health_check():
 
         return {"status": "healthy", "services": ["qdrant", "redis", "postgres"]}
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Health check failed: {e!s}")
+        raise HTTPException(status_code=503, detail=f"Health check failed: {e!s}") from e
 
 
 # Metrics endpoint
@@ -153,7 +151,7 @@ async def metrics():
 
 # Memory API endpoints
 @app.post("/memories")
-async def add_memory(data: Dict[str, Any]):
+async def add_memory(data: dict[str, Any]):
     """Add new memory."""
     try:
         result = memory_instance.add(
@@ -164,12 +162,12 @@ async def add_memory(data: Dict[str, Any]):
         )
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/memories")
 async def get_memories(
-    user_id: str = "default", agent_id: Optional[str] = None, run_id: Optional[str] = None, limit: int = 100
+    user_id: str = "default", agent_id: str | None = None, run_id: str | None = None, limit: int = 100
 ):
     """Get memories."""
     try:
@@ -178,11 +176,11 @@ async def get_memories(
         )
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post("/memories/search")
-async def search_memories(data: Dict[str, Any]):
+async def search_memories(data: dict[str, Any]):
     """Search memories."""
     try:
         result = memory_instance.search(
@@ -194,17 +192,17 @@ async def search_memories(data: Dict[str, Any]):
         )
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.put("/memories/{memory_id}")
-async def update_memory(memory_id: str, data: Dict[str, Any]):
+async def update_memory(memory_id: str, data: dict[str, Any]):
     """Update memory."""
     try:
         result = memory_instance.update(memory_id=memory_id, data=data.get("data"))
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.delete("/memories/{memory_id}")
@@ -214,7 +212,7 @@ async def delete_memory(memory_id: str):
         memory_instance.delete(memory_id=memory_id)
         return {"success": True, "message": "Memory deleted"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/")
@@ -226,7 +224,7 @@ async def root():
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host=os.getenv("HOST", "127.0.0.1"),
         port=8000,
         log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )

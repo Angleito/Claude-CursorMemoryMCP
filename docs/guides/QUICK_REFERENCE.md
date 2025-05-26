@@ -36,7 +36,7 @@ sudo journalctl -u mem0ai.service -f
 ### Docker Management
 ```bash
 # Navigate to project directory
-cd /opt/mem0ai
+cd /mem0ai
 
 # Container operations
 sudo -u mem0ai docker-compose ps
@@ -61,7 +61,7 @@ curl -f http://localhost/health
 sudo systemctl is-active mem0ai.service
 
 # Container health
-cd /opt/mem0ai && sudo -u mem0ai docker-compose ps
+cd /mem0ai && sudo -u mem0ai docker-compose ps
 
 # Database connectivity
 sudo -u mem0ai docker-compose exec postgres pg_isready
@@ -112,7 +112,7 @@ openssl s_client -connect yourdomain.com:443 -servername yourdomain.com
 ### Backup Operations
 ```bash
 # Manual backup
-cd /opt/mem0ai && sudo -u mem0ai ./scripts/backup.sh
+cd /mem0ai && sudo -u mem0ai ./scripts/backup.sh
 
 # List available backups
 sudo -u mem0ai ./scripts/restore.sh --list
@@ -141,11 +141,11 @@ sudo -u mem0ai ./scripts/restore.sh
 ### Log Locations
 ```bash
 # Application logs
-tail -f /opt/mem0ai/logs/app.log
+tail -f /mem0ai/logs/app.log
 
 # Nginx logs
-tail -f /opt/mem0ai/logs/nginx/access.log
-tail -f /opt/mem0ai/logs/nginx/error.log
+tail -f /mem0ai/logs/nginx/access.log
+tail -f /mem0ai/logs/nginx/error.log
 
 # System logs
 sudo journalctl -u mem0ai.service -f
@@ -162,7 +162,7 @@ df -h
 iostat 1 5
 
 # Docker resources
-cd /opt/mem0ai && sudo -u mem0ai docker stats
+cd /mem0ai && sudo -u mem0ai docker stats
 
 # Network connections
 sudo ss -tuln
@@ -174,15 +174,15 @@ sudo netstat -tuln
 ### Important Files
 ```bash
 # Main configuration
-/opt/mem0ai/.env
+/mem0ai/.env
 
 # Docker configuration
-/opt/mem0ai/docker-compose.yml
-/opt/mem0ai/docker-compose.override.yml
+/mem0ai/docker-compose.yml
+/mem0ai/docker-compose.override.yml
 
 # Nginx configuration
-/opt/mem0ai/config/nginx/nginx.conf
-/opt/mem0ai/config/nginx/sites-available/mem0ai.conf
+/mem0ai/config/nginx/nginx.conf
+/mem0ai/config/nginx/sites-available/mem0ai.conf
 
 # systemd services
 /etc/systemd/system/mem0ai.service
@@ -193,16 +193,16 @@ sudo netstat -tuln
 ### Edit Configuration
 ```bash
 # Environment variables
-sudo -u mem0ai nano /opt/mem0ai/.env
+sudo -u mem0ai nano /mem0ai/.env
 
 # Docker Compose overrides
-sudo -u mem0ai nano /opt/mem0ai/docker-compose.override.yml
+sudo -u mem0ai nano /mem0ai/docker-compose.override.yml
 
 # Nginx configuration
-sudo -u mem0ai nano /opt/mem0ai/config/nginx/sites-available/mem0ai.conf
+sudo -u mem0ai nano /mem0ai/config/nginx/sites-available/mem0ai.conf
 
 # Reload after changes
-cd /opt/mem0ai && sudo -u mem0ai docker-compose up -d
+cd /mem0ai && sudo -u mem0ai docker-compose up -d
 sudo systemctl reload-or-restart mem0ai.service
 ```
 
@@ -212,12 +212,12 @@ sudo systemctl reload-or-restart mem0ai.service
 ```bash
 # Complete restart
 sudo systemctl stop mem0ai.service
-cd /opt/mem0ai && sudo -u mem0ai docker-compose down
+cd /mem0ai && sudo -u mem0ai docker-compose down
 sudo -u mem0ai docker-compose up -d
 sudo systemctl start mem0ai.service
 
 # Force container rebuild
-cd /opt/mem0ai && sudo -u mem0ai docker-compose down
+cd /mem0ai && sudo -u mem0ai docker-compose down
 sudo -u mem0ai docker-compose build --no-cache
 sudo -u mem0ai docker-compose up -d
 ```
@@ -225,7 +225,7 @@ sudo -u mem0ai docker-compose up -d
 ### SSL Issues
 ```bash
 # Force certificate renewal
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose run --rm certbot renew --force-renewal
 sudo -u mem0ai docker-compose exec nginx nginx -s reload
 
@@ -236,7 +236,7 @@ openssl s_client -connect yourdomain.com:443 -servername yourdomain.com
 ### Database Issues
 ```bash
 # PostgreSQL recovery
-cd /opt/mem0ai
+cd /mem0ai
 sudo -u mem0ai docker-compose exec postgres psql -U mem0ai -d mem0ai
 
 # Redis recovery
@@ -324,7 +324,7 @@ SESSION_TIMEOUT=3600
 ### Check These First
 1. **Health endpoint**: `curl -f http://localhost/health`
 2. **Service logs**: `sudo journalctl -u mem0ai.service -n 50`
-3. **Container logs**: `cd /opt/mem0ai && sudo -u mem0ai docker-compose logs`
+3. **Container logs**: `cd /mem0ai && sudo -u mem0ai docker-compose logs`
 4. **System resources**: `htop` and `df -h`
 
 ### Useful Debug Commands
@@ -333,14 +333,14 @@ SESSION_TIMEOUT=3600
 sudo /usr/local/bin/security-audit.sh
 
 # Docker environment
-cd /opt/mem0ai && sudo -u mem0ai docker-compose config
+cd /mem0ai && sudo -u mem0ai docker-compose config
 
 # Network connectivity
 sudo ss -tuln | grep -E "(80|443|8000|5432|6379|6333)"
 
 # File permissions
-ls -la /opt/mem0ai/
-sudo -u mem0ai ls -la /opt/mem0ai/.env
+ls -la /mem0ai/
+sudo -u mem0ai ls -la /mem0ai/.env
 ```
 
 ---

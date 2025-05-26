@@ -40,6 +40,8 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
 
 ## 🛠️ Installation & Setup
 
+> **Quick Start?** See [QUICKSTART.md](QUICKSTART.md) for a condensed setup guide.
+
 ### Prerequisites
 
 - Python 3.11+ (recommended: 3.13.3+)
@@ -75,16 +77,16 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
 3. **Test the MCP Server**
    ```bash
    # Development mode with MCP Inspector
-   mcp dev main.py
+   mcp dev mcp_server.py
    
    # Or run directly
-   uv run main.py
+   uv run mcp_server.py
    ```
 
 4. **Install in Claude Desktop/Claude Code**
    ```bash
    # Quick install for Claude Desktop
-   mcp install main.py --name "Memory Server"
+   mcp install mcp_server.py --name "Memory Server"
    
    # Or configure manually (see MCP Configuration section)
    ```
@@ -114,7 +116,7 @@ Add to your Claude Desktop configuration at `~/Library/Application Support/Claud
         "--directory",
         "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
         "run",
-        "main.py"
+        "mcp_server.py"
       ],
       "env": {
         "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
@@ -138,7 +140,7 @@ For Claude Code, add to your configuration file:
         "--directory",
         "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
         "run",
-        "main.py"
+        "mcp_server.py"
       ],
       "env": {
         "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
@@ -158,7 +160,7 @@ If you prefer using Python directly:
   "mcpServers": {
     "memory": {
       "command": "python",
-      "args": ["/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP/main.py"],
+      "args": ["/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP/mcp_server.py"],
       "env": {
         "PYTHONPATH": "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
         "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
@@ -278,18 +280,41 @@ memory_storage_bytes
 ## 📁 Project Structure
 
 ```
-├── src/                    # Core MCP server implementation
+├── app/                    # FastAPI web application
+│   └── main.py            # REST API server
+├── auth/                   # Authentication and authorization
+│   ├── api_keys.py        # API key management
+│   ├── middleware.py      # Auth middleware
+│   ├── rbac.py            # Role-based access control
+│   └── security.py        # Security utilities
+├── src/                    # Core application source
+│   ├── core/              # Core business logic
+│   │   ├── backup_recovery_system.py
+│   │   ├── batch_processor.py
+│   │   ├── embedding_pipeline.py
+│   │   └── memory_deduplicator.py
+│   ├── optimization/      # Performance optimization
+│   │   ├── query_performance_tuner.py
+│   │   ├── similarity_search_optimizer.py
+│   │   ├── vector_compression.py
+│   │   └── vector_indexing_benchmark.py
 │   ├── mcp.py             # MCP protocol implementation
 │   ├── memory.py          # Memory storage and retrieval
 │   ├── models.py          # Data models and schemas
 │   └── websocket.py       # Real-time communication
-├── auth/                  # Authentication and security
-├── config/                # Configuration management
-├── scripts/               # Setup and maintenance scripts
 ├── monitoring/            # Observability and metrics
-├── examples/              # Client integration examples
+├── security/              # Security modules
+├── config/                # Configuration files
+├── scripts/               # Utility scripts
+├── examples/              # Client examples
+├── docs/                  # Documentation
+│   ├── guides/            # User guides
+│   └── sql/               # Database schemas
+├── mcp_server.py          # MCP server entry point
 └── docker-compose.yml     # Container orchestration
 ```
+
+For a complete project structure, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
 
 ## 🤝 Usage Examples
 
@@ -417,6 +442,13 @@ The project enforces:
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 📖 Documentation
+
+- **Quick Start**: [QUICKSTART.md](QUICKSTART.md) - Get up and running quickly
+- **Project Structure**: [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - Understand the codebase
+- **Claude Integration**: [CLAUDE.md](CLAUDE.md) - Claude-specific configuration
+- **Deployment Guide**: [docs/guides/DEPLOYMENT_GUIDE.md](docs/guides/DEPLOYMENT_GUIDE.md)
 
 ## 🆘 Support
 

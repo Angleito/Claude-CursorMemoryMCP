@@ -2,17 +2,23 @@
 """Validation script for monitoring and metrics setup."""
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
 import yaml
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
-
 from monitoring.audit_logger import AuditLogger
 from src.metrics import PerformanceMonitor
 from src.metrics import metrics_collector
+
+# Add project root to path
+sys.path.append(str(Path(__file__).parent.parent))
+
+logger = logging.getLogger(__name__)
+
+# Validation script constants
+ERROR_RATE_THRESHOLD = 0.1
 
 
 class MonitoringValidator:
@@ -27,18 +33,18 @@ class MonitoringValidator:
     def add_error(self, test_name: str, error: str):
         """Add an error."""
         self.errors.append(f"{test_name}: {error}")
-        print(f"❌ {test_name}: {error}")
+        logger.error("❌ %s: %s", test_name, error)
 
     def add_warning(self, test_name: str, warning: str):
         """Add a warning."""
         self.warnings.append(f"{test_name}: {warning}")
-        print(f"⚠️  {test_name}: {warning}")
+        logger.warning("⚠️  %s: %s", test_name, warning)
 
     def add_success(self, test_name: str, message: str = ""):
         """Add a success."""
         self.success_count += 1
         suffix = f": {message}" if message else ""
-        print(f"✅ {test_name}{suffix}")
+        logger.info("✅ %s%s", test_name, suffix)
 
     def test_prometheus_metrics(self):
         """Test Prometheus metrics definitions."""
@@ -97,9 +103,9 @@ class MonitoringValidator:
             monitor = PerformanceMonitor()
 
             # Test threshold setting
-            monitor.set_threshold("error_rate", 0.1)
+            monitor.set_threshold("error_rate", ERROR_RATE_THRESHOLD)
 
-            if monitor.thresholds["error_rate"] != 0.1:
+            if monitor.thresholds["error_rate"] != ERROR_RATE_THRESHOLD:
                 raise ValueError("Threshold setting failed")
 
             self.add_success("PerformanceMonitor functionality")
@@ -265,7 +271,7 @@ class MonitoringValidator:
 
     async def run_all_tests(self):
         """Run all validation tests."""
-        print("🔍 Starting monitoring and metrics validation...\n")
+        logger.info("🔍 Starting monitoring and metrics validation...\n")
 
         # Run synchronous tests
         self.test_monitoring_file_structure()
@@ -280,24 +286,24 @@ class MonitoringValidator:
         await self.test_audit_logger()
 
         # Print summary
-        print("\n" + "=" * 60)
-        print("VALIDATION SUMMARY")
-        print("=" * 60)
+        logger.info("\n" + "=" * 60)
+        logger.info("VALIDATION SUMMARY")
+        logger.info("=" * 60)
 
-        print(f"✅ Successful tests: {self.success_count}/{self.test_count}")
+        logger.info("✅ Successful tests: %d/%d", self.success_count, self.test_count)
 
         if self.warnings:
-            print(f"⚠️  Warnings: {len(self.warnings)}")
+            logger.warning("⚠️  Warnings: %d", len(self.warnings))
             for warning in self.warnings:
-                print(f"   - {warning}")
+                logger.warning("   - %s", warning)
 
         if self.errors:
-            print(f"❌ Errors: {len(self.errors)}")
+            logger.error("❌ Errors: %d", len(self.errors))
             for error in self.errors:
-                print(f"   - {error}")
+                logger.error("   - %s", error)
             return False
         else:
-            print("🎉 All tests passed!")
+            logger.info("🎉 All tests passed!")
             return True
 
 

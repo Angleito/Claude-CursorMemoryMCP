@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Production-grade Backup and Recovery System for Vector Data in mem0ai
+"""Production-grade Backup and Recovery System for Vector Data in mem0ai.
+
 Comprehensive backup, restoration, and disaster recovery for vector databases.
 """
 
@@ -24,10 +25,6 @@ from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Tuple
 
 import asyncpg
 import boto3
@@ -38,7 +35,7 @@ from botocore.exceptions import ClientError
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
-    handlers=[logging.StreamHandler(), logging.FileHandler("/tmp/backup_recovery.log")],
+    handlers=[logging.StreamHandler(), logging.FileHandler(os.path.join(tempfile.gettempdir(), "backup_recovery.log"))],
 )
 logger = logging.getLogger(__name__)
 
@@ -78,12 +75,12 @@ class BackupConfig:
 
     backup_type: BackupType = BackupType.FULL
     storage_backend: StorageBackend = StorageBackend.LOCAL
-    local_backup_dir: str = "/tmp/mem0ai_backups"
-    s3_bucket: Optional[str] = None
+    local_backup_dir: str = tempfile.gettempdir() + "/mem0ai_backups"
+    s3_bucket: str | None = None
     s3_prefix: str = "mem0ai-backups"
     compress_data: bool = True
     encrypt_data: bool = True
-    encryption_key: Optional[str] = None
+    encryption_key: str | None = None
     retention_days: int = 30
     max_backup_size_gb: int = 100
     parallel_workers: int = 4
@@ -98,13 +95,17 @@ class BackupConfig:
     def __post_init__(self) -> None:
         """Validate configuration after initialization."""
         if self.parallel_workers < 1:
-            raise ValueError("parallel_workers must be at least 1")
+            msg = "parallel_workers must be at least 1"
+            raise ValueError(msg)
         if self.retention_days < 1:
-            raise ValueError("retention_days must be at least 1")
+            msg = "retention_days must be at least 1"
+            raise ValueError(msg)
         if self.max_backup_size_gb < 1:
-            raise ValueError("max_backup_size_gb must be at least 1")
+            msg = "max_backup_size_gb must be at least 1"
+            raise ValueError(msg)
         if self.storage_backend == StorageBackend.S3 and not self.s3_bucket:
-            raise ValueError("s3_bucket is required when using S3 storage backend")
+            msg = "s3_bucket is required when using S3 storage backend"
+            raise ValueError(msg)
         if self.encrypt_data and not self.encryption_key:
             logger.warning("Encryption enabled but no encryption key provided")
 
@@ -124,7 +125,7 @@ class BackupMetadata:
     storage_backend: StorageBackend
     storage_path: str
     encryption_enabled: bool
-    backup_config: Dict[str, Any]
+    backup_config: dict[str, Any]
 
 
 @dataclass
@@ -135,15 +136,15 @@ class BackupOperation:
     backup_type: BackupType
     status: BackupStatus
     started_at: datetime
-    completed_at: Optional[datetime]
+    completed_at: datetime | None
     progress_percent: float
     current_step: str
     files_processed: int
     total_files: int
     size_processed_bytes: int
     total_size_bytes: int
-    error_message: Optional[str]
-    metadata: Optional[BackupMetadata]
+    error_message: str | None
+    metadata: BackupMetadata | None
 
 
 class ProgressTracker:
@@ -151,7 +152,8 @@ class ProgressTracker:
 
     def __init__(self, total_items: int) -> None:
         if total_items < 0:
-            raise ValueError("total_items cannot be negative")
+            msg = "total_items cannot be negative"
+            raise ValueError(msg)
         self.total_items = total_items
         self.processed_items = 0
         self.current_step = ""
@@ -159,10 +161,11 @@ class ProgressTracker:
         self.lock = threading.RLock()  # Use RLock for re-entrant locking
         self.error_count = 0
 
-    def update(self, processed: int, step: Optional[str] = None) -> None:
+    def update(self, processed: int, step: str | None = None) -> None:
         """Update progress with validation."""
         if processed < 0:
-            raise ValueError("processed items cannot be negative")
+            msg = "processed items cannot be negative"
+            raise ValueError(msg)
 
         with self.lock:
             self.processed_items = min(
@@ -170,24 +173,24 @@ class ProgressTracker:
             )
             if step:
                 self.current_step = step
-                logger.debug(f"Progress update: {self.get_progress()[0]:.1f}% - {step}")
+                logger.debug("Progress update: {self.get_progress()[0]:.1%} - %s", step)
 
     def increment_error(self) -> None:
         """Increment error counter."""
         with self.lock:
             self.error_count += 1
 
-    def get_progress(self) -> Tuple[float, str]:
+    def get_progress(self) -> tuple[float, str]:
         """Get current progress with additional metrics."""
         with self.lock:
             progress = (
                 (self.processed_items / self.total_items) * 100
                 if self.total_items > 0
-                else 0
+                else 0.0
             )
             return min(progress, 100.0), self.current_step
 
-    def get_eta(self) -> Optional[float]:
+    def get_eta(self) -> float | None:
         """Calculate estimated time of arrival."""
         with self.lock:
             if self.processed_items == 0:
@@ -203,7 +206,7 @@ class StorageManager:
 
     def __init__(self, config: BackupConfig) -> None:
         self.config = config
-        self.s3_client: Optional[boto3.client] = None
+        self.s3_client: boto3.client | None = None
         self.local_dir = Path(config.local_backup_dir)
         self.executor = ThreadPoolExecutor(max_workers=config.parallel_workers)
 
@@ -217,8 +220,8 @@ class StorageManager:
                     f"Unsupported storage backend: {config.storage_backend}"
                 )
         except Exception as e:
-            logger.error(f"Failed to initialize storage manager: {e}")
-            raise
+            logger.error("Failed to initialize storage manager", error=str(e))
+            raise RuntimeError(f"Failed to initialize storage manager: {e}") from e
 
     def _init_s3(self) -> None:
         """Initialize S3 client with comprehensive error handling."""
@@ -241,27 +244,27 @@ class StorageManager:
             try:
                 self.s3_client.head_bucket(Bucket=self.config.s3_bucket)
                 logger.info(
-                    f"Successfully connected to S3 bucket: {self.config.s3_bucket}"
+                    "Successfully connected to S3 bucket: %s", self.config.s3_bucket
                 )
             except ClientError as e:
                 error_code = e.response["Error"]["Code"]
                 if error_code == "404":
                     raise ValueError(
                         f"S3 bucket '{self.config.s3_bucket}' does not exist"
-                    )
+                    ) from e
                 elif error_code == "403":
                     raise PermissionError(
                         f"Access denied to S3 bucket '{self.config.s3_bucket}'"
-                    )
+                    ) from e
                 else:
-                    raise
+                    raise RuntimeError(f"S3 bucket access error: {e}") from e
 
         except (ClientError, BotoCoreError) as e:
-            logger.error(f"Failed to initialize S3 client: {e}")
-            raise
+            logger.error("Failed to initialize S3 client", error=str(e))
+            raise RuntimeError(f"Failed to initialize S3 client: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error initializing S3: {e}")
-            raise
+            logger.error("Unexpected error initializing S3", error=str(e))
+            raise RuntimeError(f"Unexpected error initializing S3: {e}") from e
 
     def _init_local(self) -> None:
         """Initialize local storage with validation."""
@@ -278,30 +281,32 @@ class StorageManager:
             except Exception as e:
                 raise PermissionError(
                     f"No write permission to backup directory {self.local_dir}: {e}"
-                )
+                ) from e
 
             # Check available space
             stat = os.statvfs(self.local_dir)
             available_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
 
+            # Check if available space is less than maximum backup size
             if available_gb < self.config.max_backup_size_gb:
                 logger.warning(
-                    f"Available space ({available_gb:.1f}GB) is less than max backup size "
-                    f"({self.config.max_backup_size_gb}GB)"
+                    "Available space (%.1fGB) is less than max backup size (%.1fGB)",
+                    available_gb, self.config.max_backup_size_gb
                 )
 
             logger.info(
-                f"Local backup directory initialized: {self.local_dir} ({available_gb:.1f}GB available)"
+                "Local backup directory initialized: %s (%.1fGB available)",
+                self.local_dir, available_gb
             )
 
         except Exception as e:
-            logger.error(f"Failed to initialize local storage: {e}")
-            raise
+            logger.error("Failed to initialize local storage", error=str(e))
+            raise RuntimeError(f"Failed to initialize local storage: {e}") from e
 
     async def store_file(self, local_path: str, remote_path: str) -> bool:
         """Store file to configured backend with retry logic."""
         if not Path(local_path).exists():
-            logger.error(f"Local file does not exist: {local_path}")
+            logger.error("Local file does not exist", path=str(local_path))
             return False
 
         for attempt in range(self.config.max_retries):
@@ -312,7 +317,8 @@ class StorageManager:
                     return await self._store_to_local(local_path, remote_path)
             except Exception as e:
                 logger.warning(
-                    f"Attempt {attempt + 1}/{self.config.max_retries} failed to store {local_path}: {e}"
+                    "Attempt %d/%d failed to store %s: %s",
+                    attempt + 1, self.config.max_retries, local_path, e
                 )
                 if attempt < self.config.max_retries - 1:
                     await asyncio.sleep(
@@ -341,7 +347,7 @@ class StorageManager:
                 )
                 if head_response["ContentLength"] == file_size:
                     logger.debug(
-                        f"File {key} already exists with same size, skipping upload"
+                        "File %s already exists with same size, skipping upload", key
                     )
                     return True
             except ClientError as e:
@@ -350,7 +356,7 @@ class StorageManager:
 
             # Upload file with progress tracking
             def progress_callback(bytes_transferred: int) -> None:
-                logger.debug(f"Uploaded {bytes_transferred}/{file_size} bytes to {key}")
+                logger.debug("Uploaded {bytes_transferred}/{file_size} bytes to %s", key)
 
             # Run upload in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
@@ -373,7 +379,7 @@ class StorageManager:
                         f"Upload verification failed: size mismatch {head_response['ContentLength']} != {file_size}"
                     )
             except ClientError as e:
-                raise RuntimeError(f"Upload verification failed: {e}")
+                raise RuntimeError(f"Upload verification failed: {e}") from e
 
             logger.info(
                 f"Successfully uploaded {local_path} to s3://{self.config.s3_bucket}/{key} ({file_size} bytes)"
@@ -381,8 +387,8 @@ class StorageManager:
             return True
 
         except Exception as e:
-            logger.error(f"S3 upload failed for {local_path}: {e}")
-            raise
+            logger.error("S3 upload failed for {local_path}: %s", e)
+            raise RuntimeError(f"S3 upload failed for {local_path}: {e}") from e
 
     async def _store_to_local(self, local_path: str, remote_path: str) -> bool:
         """Store file to local directory with validation."""
@@ -401,7 +407,7 @@ class StorageManager:
 
             # Skip if same file
             if source_path.resolve() == target_path.resolve():
-                logger.debug(f"Source and target are the same file: {local_path}")
+                logger.debug("Source and target are the same file: %s", local_path)
                 return True
 
             # Check if target exists and compare
@@ -413,7 +419,7 @@ class StorageManager:
                     target_hash = self._calculate_checksum(str(target_path))
                     if source_hash == target_hash:
                         logger.debug(
-                            f"Target file already exists with same content: {target_path}"
+                            "Target file already exists with same content: %s", target_path
                         )
                         return True
 
@@ -433,8 +439,8 @@ class StorageManager:
             return True
 
         except Exception as e:
-            logger.error(f"Local storage failed for {local_path}: {e}")
-            raise
+            logger.error("Local storage failed for {local_path}: %s", e)
+            raise RuntimeError(f"Local storage failed for {local_path}: {e}") from e
 
     async def retrieve_file(self, remote_path: str, local_path: str) -> bool:
         """Retrieve file from storage backend."""
@@ -444,7 +450,7 @@ class StorageManager:
             else:
                 return await self._retrieve_from_local(remote_path, local_path)
         except Exception as e:
-            logger.error(f"Failed to retrieve file {remote_path}: {e}")
+            logger.error("Failed to retrieve file {remote_path}: %s", e)
             return False
 
     async def _retrieve_from_s3(self, remote_path: str, local_path: str) -> bool:
@@ -464,7 +470,7 @@ class StorageManager:
             return True
 
         except Exception as e:
-            logger.error(f"S3 download failed: {e}")
+            logger.error("S3 download failed: %s", e)
             return False
 
     async def _retrieve_from_local(self, remote_path: str, local_path: str) -> bool:
@@ -473,7 +479,7 @@ class StorageManager:
             source_path = self.local_dir / remote_path
 
             if not source_path.exists():
-                logger.error(f"Source file not found: {source_path}")
+                logger.error("Source file not found: %s", source_path)
                 return False
 
             # Ensure target directory exists
@@ -483,10 +489,10 @@ class StorageManager:
             return True
 
         except Exception as e:
-            logger.error(f"Local retrieval failed: {e}")
+            logger.error("Local retrieval failed: %s", e)
             return False
 
-    async def list_backups(self) -> List[str]:
+    async def list_backups(self) -> list[str]:
         """List available backups."""
         try:
             if self.config.storage_backend == StorageBackend.S3:
@@ -494,10 +500,10 @@ class StorageManager:
             else:
                 return await self._list_local_backups()
         except Exception as e:
-            logger.error(f"Failed to list backups: {e}")
+            logger.error("Failed to list backups: %s", e)
             return []
 
-    async def _list_s3_backups(self) -> List[str]:
+    async def _list_s3_backups(self) -> list[str]:
         """List backups in S3."""
         try:
             response = self.s3_client.list_objects_v2(
@@ -515,10 +521,10 @@ class StorageManager:
             return backups
 
         except Exception as e:
-            logger.error(f"Failed to list S3 backups: {e}")
+            logger.error("Failed to list S3 backups: %s", e)
             return []
 
-    async def _list_local_backups(self) -> List[str]:
+    async def _list_local_backups(self) -> list[str]:
         """List local backups."""
         try:
             backups = []
@@ -528,22 +534,23 @@ class StorageManager:
             return sorted(backups, reverse=True)
 
         except Exception as e:
-            logger.error(f"Failed to list local backups: {e}")
+            logger.error("Failed to list local backups: %s", e)
             return []
 
 
 class VectorBackupRecovery:
     """Main backup and recovery system for vector data."""
 
-    def __init__(self, db_url: str, config: Optional[BackupConfig] = None) -> None:
+    def __init__(self, db_url: str, config: BackupConfig | None = None) -> None:
         if not db_url:
-            raise ValueError("Database URL is required")
+            msg = "Database URL is required"
+            raise ValueError(msg)
 
         self.db_url = db_url
         self.config = config or BackupConfig()
-        self.pool: Optional[asyncpg.Pool] = None
+        self.pool: asyncpg.Pool | None = None
         self.storage_manager = StorageManager(self.config)
-        self.active_operations: Dict[str, BackupOperation] = {}
+        self.active_operations: dict[str, BackupOperation] = {}
         self._shutdown_event = asyncio.Event()
         self._operation_lock = asyncio.Lock()
 
@@ -553,7 +560,7 @@ class VectorBackupRecovery:
 
     def _signal_handler(self, signum: int, frame) -> None:
         """Handle shutdown signals gracefully."""
-        logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+        logger.info("Received signal %s, initiating graceful shutdown...", signum)
         self._shutdown_event.set()
 
     async def initialize(self) -> None:
@@ -593,7 +600,7 @@ class VectorBackupRecovery:
                     else:
                         raise ConnectionError(
                             f"Failed to establish database connection after {self.config.max_retries} attempts"
-                        )
+                        ) from e
 
             # Create schema and tables
             await self._setup_database_schema()
@@ -605,9 +612,9 @@ class VectorBackupRecovery:
             logger.info("Backup and recovery system initialized successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize backup system: {e}")
+            logger.error("Failed to initialize backup system: %s", e)
             await self.cleanup()
-            raise
+            raise RuntimeError(f"Failed to initialize backup system: {e}") from e
 
     async def _setup_database_schema(self) -> None:
         """Setup database schema for backup tracking."""
@@ -672,7 +679,7 @@ class VectorBackupRecovery:
             # Force cancel remaining operations
             for operation_id, operation in self.active_operations.items():
                 if operation.status == BackupStatus.RUNNING:
-                    logger.warning(f"Force cancelling operation {operation_id}")
+                    logger.warning("Force cancelling operation %s", operation_id)
                     operation.status = BackupStatus.CANCELLED
 
         # Close storage manager resources
@@ -709,13 +716,13 @@ class VectorBackupRecovery:
                     sha256_hash.update(chunk)
             return sha256_hash.hexdigest()
         except Exception as e:
-            logger.error(f"Failed to calculate checksum for {file_path}: {e}")
-            raise
+            logger.error("Failed to calculate checksum for {file_path}: %s", e)
+            raise RuntimeError(f"Failed to calculate checksum for {file_path}: {e}") from e
 
     async def create_backup(
         self,
-        backup_type: Optional[BackupType] = None,
-        include_users: Optional[List[str]] = None,
+        backup_type: BackupType | None = None,
+        include_users: list[str] | None = None,
     ) -> str:
         """Create a backup with comprehensive error handling and monitoring."""
         backup_type = backup_type or self.config.backup_type
@@ -798,14 +805,14 @@ class VectorBackupRecovery:
             # Log backup completion
             await self._log_backup_operation(operation)
 
-            logger.info(f"Backup {backup_id} completed successfully in {duration:.1f}s")
+            logger.info("Backup %s completed successfully in %.1fs", backup_id, duration)
             return backup_id
 
         except asyncio.CancelledError:
             operation.status = BackupStatus.CANCELLED
             operation.error_message = "Backup cancelled"
             operation.completed_at = datetime.now()
-            logger.warning(f"Backup {backup_id} was cancelled")
+            logger.warning("Backup %s was cancelled", backup_id)
             raise
 
         except Exception as e:
@@ -835,7 +842,7 @@ class VectorBackupRecovery:
             async with self.pool.acquire() as conn:
                 await conn.fetchval("SELECT 1")
         except Exception as e:
-            raise RuntimeError(f"Database connectivity check failed: {e}")
+            raise RuntimeError(f"Database connectivity check failed: {e}") from e
 
         # Check storage availability
         if self.config.storage_backend == StorageBackend.LOCAL:
@@ -864,7 +871,7 @@ class VectorBackupRecovery:
         self,
         backup_id: str,
         operation: BackupOperation,
-        include_users: Optional[List[str]] = None,
+        include_users: list[str] | None = None,
     ) -> BackupMetadata:
         """Create incremental backup (changes since last backup)."""
         # TODO: Implement incremental backup logic
@@ -874,7 +881,7 @@ class VectorBackupRecovery:
         self,
         backup_id: str,
         operation: BackupOperation,
-        include_users: Optional[List[str]] = None,
+        include_users: list[str] | None = None,
     ) -> BackupMetadata:
         """Create differential backup (changes since last full backup)."""
         # TODO: Implement differential backup logic
@@ -884,7 +891,7 @@ class VectorBackupRecovery:
         self,
         backup_id: str,
         operation: BackupOperation,
-        include_users: Optional[List[str]] = None,
+        include_users: list[str] | None = None,
     ) -> BackupMetadata:
         """Create full database backup."""
         temp_dir = Path(tempfile.mkdtemp(prefix=f"backup_{backup_id}_"))
@@ -958,7 +965,7 @@ class VectorBackupRecovery:
         self,
         backup_id: str,
         operation: BackupOperation,
-        include_users: Optional[List[str]] = None,
+        include_users: list[str] | None = None,
     ) -> BackupMetadata:
         """Create vector-only backup."""
         temp_dir = Path(tempfile.mkdtemp(prefix=f"backup_{backup_id}_"))
@@ -1017,7 +1024,7 @@ class VectorBackupRecovery:
         self,
         backup_id: str,
         operation: BackupOperation,
-        include_users: Optional[List[str]] = None,
+        include_users: list[str] | None = None,
     ) -> BackupMetadata:
         """Create metadata-only backup."""
         temp_dir = Path(tempfile.mkdtemp(prefix=f"backup_{backup_id}_"))
@@ -1114,11 +1121,99 @@ class VectorBackupRecovery:
                 if current_table:
                     f.write("\n);\n")
 
+    async def _get_export_count(
+        self, conn: Any, include_users: list[str] | None = None
+    ) -> tuple[int, list[Any]]:
+        """Get total count of records to export."""
+        params: list[Any] = []
+        if include_users:
+            count_query = "SELECT COUNT(*) FROM mem0_vectors.memories WHERE user_id = ANY($1)"
+            params = [include_users]
+        else:
+            count_query = "SELECT COUNT(*) FROM mem0_vectors.memories"
+
+        total_count = await conn.fetchval(count_query, *params)
+        return total_count, params
+
+    def _prepare_batch_query(
+        self, include_users: list[str] | None, batch_size: int, offset: int
+    ) -> tuple[str, list[Any]]:
+        """Prepare batch query and parameters."""
+        base_query = """
+            SELECT id, user_id, memory_text, embedding, metadata,
+                   memory_hash, memory_type, importance_score,
+                   access_count, created_at, updated_at, last_accessed
+            FROM mem0_vectors.memories
+            {where_clause}
+            ORDER BY created_at
+            LIMIT {limit_clause}
+        """
+
+        if include_users:
+            where_clause = "WHERE user_id = ANY($1)"
+            limit_clause = "$2 OFFSET $3"
+            params = [include_users, batch_size, offset]
+        else:
+            where_clause = ""
+            limit_clause = "$1 OFFSET $2"
+            params = [batch_size, offset]
+
+        query = base_query.format(where_clause=where_clause, limit_clause=limit_clause)
+        return query, params
+
+    def _serialize_record(self, row: Any) -> str | None:
+        """Serialize a database record to JSON."""
+        try:
+            record = dict(row)
+
+            # Handle datetime fields
+            for field in ["created_at", "updated_at", "last_accessed"]:
+                if record.get(field):
+                    record[field] = record[field].isoformat()
+
+            # Handle UUID
+            if record.get("id"):
+                record["id"] = str(record["id"])
+
+            # Handle metadata JSON
+            if record.get("metadata") and isinstance(record["metadata"], str):
+                try:
+                    record["metadata"] = json.loads(record["metadata"])
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Invalid JSON in metadata for record %s",
+                        record.get('id', 'unknown')
+                    )
+                    record["metadata"] = {}
+
+            return json.dumps(record, ensure_ascii=False)
+        except Exception as e:
+            logger.error(
+                "Failed to serialize record %s: %s",
+                row.get('id', 'unknown'), e
+            )
+            return None
+
+    def _update_operation_progress(
+        self,
+        operation: BackupOperation | None,
+        exported_count: int,
+        offset: int,
+        total_count: int,
+    ) -> None:
+        """Update operation progress tracking."""
+        if not operation:
+            return
+
+        operation.files_processed = exported_count
+        operation.progress_percent = (offset / total_count) * 80  # 80% for export
+        operation.current_step = f"Exported {exported_count}/{total_count} records"
+
     async def _export_vector_data(
         self,
         output_file: str,
-        include_users: Optional[List[str]] = None,
-        operation: Optional[BackupOperation] = None,
+        include_users: list[str] | None = None,
+        operation: BackupOperation | None = None,
     ) -> None:
         """Export vector data to JSONL format with robust error handling."""
         if not self.pool:
@@ -1126,23 +1221,11 @@ class VectorBackupRecovery:
 
         try:
             async with self.pool.acquire() as conn:
-                # Build query with proper parameterization
-                where_clause = ""
-                params: List[Any] = []
-
-                if include_users:
-                    where_clause = "WHERE user_id = ANY($1)"
-                    params = [include_users]
-
-                # Get total count for progress tracking
-                count_query = (
-                    f"SELECT COUNT(*) FROM mem0_vectors.memories {where_clause}"
-                )
-                total_count = await conn.fetchval(count_query, *params)
+                # Get total count
+                total_count, _ = await self._get_export_count(conn, include_users)
 
                 if total_count == 0:
                     logger.warning("No memory records found to export")
-                    # Create empty file
                     Path(output_file).touch()
                     return
 
@@ -1150,115 +1233,78 @@ class VectorBackupRecovery:
                     operation.total_files = total_count
                     operation.current_step = f"Exporting {total_count} memory records"
 
-                logger.info(f"Exporting {total_count} memory records to {output_file}")
+                logger.info("Exporting %s memory records to %s", total_count, output_file)
 
-                # Export data in batches with error handling
-                batch_size = 1000
-                offset = 0
-                exported_count = 0
-
-                with open(output_file, "w", encoding="utf-8") as f:
-                    while offset < total_count:
-                        # Check for shutdown signal
-                        if self._shutdown_event.is_set():
-                            raise asyncio.CancelledError(
-                                "Export cancelled due to shutdown"
-                            )
-
-                        try:
-                            batch_query = f"""
-                                SELECT id, user_id, memory_text, embedding, metadata,
-                                       memory_hash, memory_type, importance_score,
-                                       access_count, created_at, updated_at, last_accessed
-                                FROM mem0_vectors.memories
-                                {where_clause}
-                                ORDER BY created_at
-                                LIMIT ${'2' if include_users else '1'} OFFSET ${'3' if include_users else '2'}
-                            """
-
-                            batch_params = [*params, batch_size, offset]
-                            rows = await conn.fetch(batch_query, *batch_params)
-
-                            if not rows:
-                                break
-
-                            for row in rows:
-                                try:
-                                    # Convert row to JSON serializable format
-                                    record = dict(row)
-
-                                    # Handle special types
-                                    for field in [
-                                        "created_at",
-                                        "updated_at",
-                                        "last_accessed",
-                                    ]:
-                                        if record.get(field):
-                                            record[field] = record[field].isoformat()
-
-                                    if record.get("id"):
-                                        record["id"] = str(record["id"])
-
-                                    # Ensure metadata is JSON serializable
-                                    if record.get("metadata"):
-                                        if isinstance(record["metadata"], str):
-                                            try:
-                                                record["metadata"] = json.loads(
-                                                    record["metadata"]
-                                                )
-                                            except json.JSONDecodeError:
-                                                logger.warning(
-                                                    f"Invalid JSON in metadata for record {record.get('id', 'unknown')}"
-                                                )
-                                                record["metadata"] = {}
-
-                                    # Write record
-                                    f.write(
-                                        json.dumps(record, ensure_ascii=False) + "\n"
-                                    )
-                                    exported_count += 1
-
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to serialize record {row.get('id', 'unknown')}: {e}"
-                                    )
-                                    continue
-
-                            offset += len(rows)
-
-                            # Update progress
-                            if operation:
-                                operation.files_processed = exported_count
-                                operation.progress_percent = (
-                                    offset / total_count
-                                ) * 80  # 80% for export
-                                operation.current_step = (
-                                    f"Exported {exported_count}/{total_count} records"
-                                )
-
-                            # Log progress periodically
-                            if offset % 10000 == 0:
-                                logger.info(
-                                    f"Exported {exported_count} records ({offset}/{total_count})"
-                                )
-
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing batch at offset {offset}: {e}"
-                            )
-                            raise
-
-                logger.info(f"Successfully exported {exported_count} memory records")
+                # Export in batches
+                await self._export_batches(
+                    conn, output_file, include_users, total_count, operation
+                )
 
         except Exception as e:
-            logger.error(f"Failed to export vector data: {e}")
+            logger.error("Failed to export vector data: %s", e)
             # Clean up partial file on error
             if Path(output_file).exists():
                 with suppress(Exception):
                     Path(output_file).unlink()
             raise
 
-    async def _export_metadata(self, output_file: str, include_users: Optional[List[str]] = None):
+    async def _export_batches(
+        self,
+        conn: Any,
+        output_file: str,
+        include_users: list[str] | None,
+        total_count: int,
+        operation: BackupOperation | None,
+    ) -> None:
+        """Export data in batches."""
+        batch_size = 1000
+        offset = 0
+        exported_count = 0
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            while offset < total_count:
+                # Check for shutdown
+                if self._shutdown_event.is_set():
+                    raise asyncio.CancelledError("Export cancelled due to shutdown")
+
+                try:
+                    # Get batch
+                    query, params = self._prepare_batch_query(
+                        include_users, batch_size, offset
+                    )
+                    rows = await conn.fetch(query, *params)
+
+                    if not rows:
+                        break
+
+                    # Process rows
+                    for row in rows:
+                        serialized = self._serialize_record(row)
+                        if serialized:
+                            f.write(serialized + "\n")
+                            exported_count += 1
+
+                    offset += len(rows)
+
+                    # Update progress
+                    self._update_operation_progress(
+                        operation, exported_count, offset, total_count
+                    )
+
+                    # Log progress periodically
+                    if offset % 10000 == 0:
+                        logger.info(
+                            "Exported %s records (%s/%s)",
+                            exported_count, offset, total_count
+                        )
+
+                except Exception as e:
+                    logger.error("Error processing batch at offset %s: %s", offset, e)
+                    raise
+
+        logger.info("Successfully exported %s memory records", exported_count)
+
+    async def _export_metadata(self, output_file: str, include_users: list[str] | None = None):
         """Export metadata and configuration."""
         async with self.pool.acquire() as conn:
             # Get user statistics
@@ -1414,10 +1460,10 @@ class VectorBackupRecovery:
             # Don't raise here as this shouldn't fail the backup operation
 
     async def restore_backup(
-        self, backup_id: str, target_users: Optional[List[str]] = None
+        self, backup_id: str, target_users: list[str] | None = None
     ) -> bool:
         """Restore from backup."""
-        logger.info(f"Starting restore from backup {backup_id}")
+        logger.info("Starting restore from backup %s", backup_id)
 
         try:
             # Get backup metadata
@@ -1450,7 +1496,22 @@ class VectorBackupRecovery:
                 import tarfile
 
                 with tarfile.open(archive_file, "r:gz") as tar:
-                    tar.extractall(temp_dir)
+                    # Safe extraction to prevent path traversal attacks
+                    def is_within_directory(directory, target):
+                        abs_directory = os.path.abspath(directory)
+                        abs_target = os.path.abspath(target)
+                        prefix = os.path.commonpath([abs_directory, abs_target])
+                        return prefix == abs_directory
+
+                    for member in tar.getmembers():
+                        # Sanitize file paths to prevent directory traversal
+                        if member.name.startswith('/') or '..' in member.name:
+                            continue
+                        member_path = os.path.join(temp_dir, member.name)
+                        if not is_within_directory(temp_dir, member_path):
+                            continue
+
+                    tar.extractall(temp_dir, members=tar.getmembers())
 
                 # Restore data based on backup type
                 backup_type = BackupType(backup_info["backup_type"])
@@ -1464,18 +1525,18 @@ class VectorBackupRecovery:
                 elif backup_type == BackupType.METADATA_ONLY:
                     await self._restore_metadata(temp_dir / "metadata.json")
 
-                logger.info(f"Restore from backup {backup_id} completed successfully")
+                logger.info("Restore from backup %s completed successfully", backup_id)
                 return True
 
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
-            logger.error(f"Restore from backup {backup_id} failed: {e}")
+            logger.error("Restore from backup {backup_id} failed: %s", e)
             return False
 
     async def _restore_full_backup(
-        self, backup_dir: Path, target_users: Optional[List[str]] = None
+        self, backup_dir: Path, target_users: list[str] | None = None
     ):
         """Restore full backup."""
         # Restore vector data
@@ -1484,11 +1545,10 @@ class VectorBackupRecovery:
             await self._restore_vector_data(vector_file, target_users)
 
     async def _restore_vector_data(
-        self, data_file: Path, target_users: Optional[List[str]] = None
+        self, data_file: Path, target_users: list[str] | None = None
     ):
         """Restore vector data from JSONL file."""
-        async with self.pool.acquire() as conn:
-            with open(data_file) as f:
+        async with self.pool.acquire() as conn, open(data_file) as f:
                 batch = []
                 batch_size = 1000
 
@@ -1509,7 +1569,7 @@ class VectorBackupRecovery:
                 if batch:
                     await self._insert_memory_batch(conn, batch)
 
-    async def _insert_memory_batch(self, conn, batch: List[Dict]):
+    async def _insert_memory_batch(self, conn, batch: list[dict]):
         """Insert batch of memory records."""
         if not batch:
             return
@@ -1555,9 +1615,9 @@ class VectorBackupRecovery:
         with open(metadata_file) as f:
             metadata = json.load(f)
 
-        logger.info(f"Restored metadata from {metadata['export_timestamp']}")
+        logger.info("Restored metadata from %s", metadata['export_timestamp'])
 
-    async def list_backups(self) -> List[Dict[str, Any]]:
+    async def list_backups(self) -> list[dict[str, Any]]:
         """List all available backups."""
         async with self.pool.acquire() as conn:
             backups = await conn.fetch(
@@ -1579,7 +1639,7 @@ class VectorBackupRecovery:
 
         return [dict(backup) for backup in backups]
 
-    async def cleanup_old_backups(self, retention_days: Optional[int] = None) -> int:
+    async def cleanup_old_backups(self, retention_days: int | None = None) -> int:
         """Cleanup old backups based on retention policy."""
         retention_days = retention_days or self.config.retention_days
         cutoff_date = datetime.now() - timedelta(days=retention_days)
@@ -1610,17 +1670,17 @@ class VectorBackupRecovery:
                     )
 
                 cleaned_count += 1
-                logger.info(f"Cleaned up old backup: {backup['backup_id']}")
+                logger.info("Cleaned up old backup: %s", backup['backup_id'])
 
             except Exception as e:
-                logger.error(f"Failed to cleanup backup {backup['backup_id']}: {e}")
+                logger.error("Failed to cleanup backup {backup['backup_id']}: %s", e)
 
         return cleaned_count
 
 
 # Context manager for automatic cleanup
 @asynccontextmanager
-async def backup_system_context(db_url: str, config: Optional[BackupConfig] = None):
+async def backup_system_context(db_url: str, config: BackupConfig | None = None):
     """Context manager for backup system with automatic cleanup."""
     backup_system = VectorBackupRecovery(db_url, config)
     try:
@@ -1633,16 +1693,15 @@ async def backup_system_context(db_url: str, config: Optional[BackupConfig] = No
 # Example usage
 async def main() -> None:
     """Test the backup and recovery system with improved error handling."""
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
-
-    if not DB_URL or "user:password" in DB_URL:
-        logger.error("Please set a valid DATABASE_URL environment variable")
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        logger.error("DATABASE_URL environment variable is required")
         return
 
     config = BackupConfig(
         backup_type=BackupType.FULL,
         storage_backend=StorageBackend.LOCAL,
-        local_backup_dir="/tmp/mem0ai_backups",
+        local_backup_dir=os.path.join(tempfile.gettempdir(), "mem0ai_backups"),
         compress_data=True,
         retention_days=7,
         max_retries=3,
@@ -1650,7 +1709,7 @@ async def main() -> None:
     )
 
     try:
-        async with backup_system_context(DB_URL, config) as backup_system:
+        async with backup_system_context(db_url, config) as backup_system:
 
             await backup_system.create_backup(BackupType.VECTOR_ONLY)
 
@@ -1669,7 +1728,7 @@ async def main() -> None:
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        logger.error(f"Backup system test failed: {e}")
+        logger.error("Backup system test failed: %s", e)
         return 1
 
     return 0

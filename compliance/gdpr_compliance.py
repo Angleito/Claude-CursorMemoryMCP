@@ -6,12 +6,20 @@ from datetime import datetime
 from datetime import timedelta
 from enum import Enum
 from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
 
 from database.secure_supabase import SecureSupabaseClient
 from monitoring.audit_logger import audit_logger
+
+# GDPR compliance constants
+MINIMUM_CONSENT_RATE = 0.8  # 80%
+EXPIRED_DATA_CLEANUP_THRESHOLD = 100
+IDENTITY_RETENTION_YEARS = 7
+CONTACT_RETENTION_YEARS = 3
+TECHNICAL_RETENTION_YEARS = 1
+BEHAVIORAL_RETENTION_YEARS = 2
+BIOMETRIC_RETENTION_YEARS = 1
+SPECIAL_RETENTION_YEARS = 10
+DEFAULT_SERVICE_RETENTION_YEARS = 3
 
 
 class DataProcessingPurpose(str, Enum):
@@ -44,12 +52,12 @@ class DataProcessingRecord:
     user_id: uuid.UUID
     purpose: DataProcessingPurpose
     legal_basis: str
-    data_categories: List[DataCategory]
-    recipients: List[str]
+    data_categories: list[DataCategory]
+    recipients: list[str]
     retention_period: timedelta
     created_at: datetime
     consent_given: bool = False
-    consent_withdrawn: Optional[datetime] = None
+    consent_withdrawn: datetime | None = None
 
 
 @dataclass
@@ -61,9 +69,9 @@ class DataSubjectRequest:
     request_type: str  # access, rectification, deletion, portability, restriction
     status: str  # pending, processing, completed, rejected
     requested_at: datetime
-    completed_at: Optional[datetime] = None
-    data_provided: Optional[Dict[str, Any]] = None
-    rejection_reason: Optional[str] = None
+    completed_at: datetime | None = None
+    data_provided: dict[str, Any] | None = None
+    rejection_reason: str | None = None
 
 
 class GDPRComplianceManager:
@@ -74,12 +82,12 @@ class GDPRComplianceManager:
 
         # Data retention periods (in days)
         self.retention_periods = {
-            DataCategory.IDENTITY: 365 * 7,  # 7 years
-            DataCategory.CONTACT: 365 * 3,  # 3 years after last contact
-            DataCategory.TECHNICAL: 365,  # 1 year
-            DataCategory.BEHAVIORAL: 365 * 2,  # 2 years
-            DataCategory.BIOMETRIC: 365,  # 1 year
-            DataCategory.SPECIAL: 365 * 10,  # 10 years (if legally required)
+            DataCategory.IDENTITY: 365 * IDENTITY_RETENTION_YEARS,
+            DataCategory.CONTACT: 365 * CONTACT_RETENTION_YEARS,
+            DataCategory.TECHNICAL: 365 * TECHNICAL_RETENTION_YEARS,
+            DataCategory.BEHAVIORAL: 365 * BEHAVIORAL_RETENTION_YEARS,
+            DataCategory.BIOMETRIC: 365 * BIOMETRIC_RETENTION_YEARS,
+            DataCategory.SPECIAL: 365 * SPECIAL_RETENTION_YEARS,
         }
 
         # Default data processing purposes
@@ -93,14 +101,14 @@ class GDPRComplianceManager:
                     DataCategory.TECHNICAL,
                 ],
                 "recipients": ["Memory Database Service"],
-                "retention_period": timedelta(days=365 * 3),
+                "retention_period": timedelta(days=365 * DEFAULT_SERVICE_RETENTION_YEARS),
             },
             {
                 "purpose": DataProcessingPurpose.LEGITIMATE_INTERESTS,
                 "legal_basis": "Security monitoring and fraud prevention",
                 "data_categories": [DataCategory.TECHNICAL, DataCategory.BEHAVIORAL],
                 "recipients": ["Security Team", "System Administrators"],
-                "retention_period": timedelta(days=365),
+                "retention_period": timedelta(days=365 * TECHNICAL_RETENTION_YEARS),
             },
         ]
 
@@ -192,8 +200,8 @@ class GDPRComplianceManager:
         purpose: DataProcessingPurpose,
         consent_given: bool,
         consent_text: str,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
     ):
         """Record user consent for data processing."""
         consent_record = {
@@ -233,12 +241,12 @@ class GDPRComplianceManager:
             details={"purpose": purpose.value, "consent_given": consent_given},
         )
 
-    async def get_user_consents(self, user_id: uuid.UUID) -> List[Dict[str, Any]]:
+    async def get_user_consents(self, user_id: uuid.UUID) -> list[dict[str, Any]]:
         """Get all consents for a user."""
         return await self.db.secure_select("consent_history", {"user_id": str(user_id)})
 
     async def withdraw_consent(
-        self, user_id: uuid.UUID, purpose: DataProcessingPurpose, ip_address: Optional[str] = None
+        self, user_id: uuid.UUID, purpose: DataProcessingPurpose, ip_address: str | None = None
     ):
         """Withdraw consent for data processing."""
         await self.record_consent(
@@ -254,7 +262,7 @@ class GDPRComplianceManager:
 
     # Data Subject Rights
     async def create_data_subject_request(
-        self, user_id: uuid.UUID, request_type: str, details: Optional[Dict[str, Any]] = None
+        self, user_id: uuid.UUID, request_type: str, details: dict[str, Any] | None = None
     ) -> uuid.UUID:
         """Create a data subject request."""
         request_data = {
@@ -284,7 +292,7 @@ class GDPRComplianceManager:
 
         return request_id
 
-    async def process_access_request(self, user_id: uuid.UUID) -> Dict[str, Any]:
+    async def process_access_request(self, user_id: uuid.UUID) -> dict[str, Any]:
         """Process data access request (Article 15)."""
         user_data = {}
 
@@ -403,7 +411,7 @@ class GDPRComplianceManager:
             }
             await self.db.secure_insert("data_retention_schedule", retention_record)
 
-    async def cleanup_expired_data(self) -> Dict[str, int]:
+    async def cleanup_expired_data(self) -> dict[str, int]:
         """Clean up expired user data (automated retention)."""
         cleanup_results = {}
 
@@ -449,7 +457,7 @@ class GDPRComplianceManager:
         return cleanup_results
 
     # Privacy Impact Assessment
-    async def generate_privacy_impact_assessment(self) -> Dict[str, Any]:
+    async def generate_privacy_impact_assessment(self) -> dict[str, Any]:
         """Generate privacy impact assessment report."""
         # Data processing statistics
         processing_stats = await self.db.client.rpc("get_processing_statistics")
@@ -592,15 +600,15 @@ class GDPRComplianceManager:
                 {"status": "failed", "rejection_reason": str(e)},
             )
 
-    async def _generate_privacy_recommendations(self) -> List[str]:
+    async def _generate_privacy_recommendations(self) -> list[str]:
         """Generate privacy improvement recommendations."""
         recommendations = []
 
         # Check consent rates
         consent_stats = await self.db.client.rpc("get_consent_statistics")
-        if consent_stats.get("consent_rate", 1.0) < 0.8:
+        if consent_stats.get("consent_rate", 1.0) < MINIMUM_CONSENT_RATE:
             recommendations.append(
-                "Improve consent mechanisms - current consent rate is below 80%"
+                f"Improve consent mechanisms - current consent rate is below {MINIMUM_CONSENT_RATE * 100}%"
             )
 
         # Check data retention
@@ -612,7 +620,7 @@ class GDPRComplianceManager:
             .execute()
         )
 
-        if expired_data.count > 100:
+        if expired_data.count > EXPIRED_DATA_CLEANUP_THRESHOLD:
             recommendations.append(
                 "Schedule cleanup of expired data - large backlog detected"
             )

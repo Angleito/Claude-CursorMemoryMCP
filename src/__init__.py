@@ -20,20 +20,20 @@ __version__ = "1.0.0"
 __author__ = "Mem0 AI Team"
 
 # Import main components for easier access
-from .config import Settings
-from .memory import MemoryManager
 from .auth import AuthManager
+from .config import Settings
 from .mcp import MCPServer
-from .websocket import ConnectionManager
-from .plugins import PluginManager
+from .memory import MemoryManager
 from .metrics import MetricsCollector
+from .plugins import PluginManager
+from .websocket import ConnectionManager
 
 __all__ = [
-    "Settings",
-    "MemoryManager", 
     "AuthManager",
-    "MCPServer",
     "ConnectionManager",
-    "PluginManager",
+    "MCPServer",
+    "MemoryManager",
     "MetricsCollector",
+    "PluginManager",
+    "Settings",
 ]

@@ -3,7 +3,7 @@
 import ssl
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import asyncpg
 import structlog
@@ -19,20 +19,36 @@ logger = structlog.get_logger()
 
 settings = get_settings()
 
+# Database constants
+MIN_POOL_SIZE = 5
+MAX_POOL_SIZE = 20
+CONNECTION_TIMEOUT = 60
+MAX_FILTERS_LIMIT = 10
+VECTOR_DIMENSION = 1536
+MAX_SEARCH_LIMIT = 1000
+MAX_RECORD_ID_LENGTH = 100
+MAX_USER_ID_LENGTH = 100
+MAX_COLUMN_NAME_LENGTH = 50
+MAX_STRING_VALUE_LENGTH = 1000
+MAX_TRUNCATED_VALUE_LENGTH = 500
+MAX_LOG_VALUE_LENGTH = 100
+DEFAULT_BATCH_SIZE = 100
+MIN_USER_AGENT_LENGTH = 10
+
 
 class SecureSupabaseClient:
     """Secure wrapper for Supabase client with encryption and auditing."""
 
     def __init__(self) -> None:
         self.settings = settings
-        self.client: Optional[Client] = None
-        self.pool: Optional[asyncpg.Pool] = None
+        self.client: Client | None = None
+        self.pool: asyncpg.Pool | None = None
         self.encryption = encryption_manager
         self.db_encryption = database_encryption
         self._initialized: bool = False
 
         # Encrypted fields configuration
-        self.encrypted_fields: Dict[str, List[str]] = {
+        self.encrypted_fields: dict[str, list[str]] = {
             "users": ["email", "full_name"],
             "memories": ["content", "metadata"],
             "api_keys": ["key_hash"],
@@ -44,7 +60,7 @@ class SecureSupabaseClient:
         """Initialize Supabase client and connection pool."""
         if self._initialized:
             return
-            
+
         try:
             if not self.client:
                 # Validate settings first
@@ -52,7 +68,7 @@ class SecureSupabaseClient:
                     raise ValueError("Supabase URL and key are required")
                 if not self.settings.database.database_url:
                     raise ValueError("Database URL is required")
-                    
+
                 # Create Supabase client
                 self.client = create_client(
                     self.settings.database.supabase_url,
@@ -68,9 +84,9 @@ class SecureSupabaseClient:
                 self.pool = await asyncpg.create_pool(
                     self.settings.database.database_url,
                     ssl=ssl_context,
-                    min_size=5,
-                    max_size=20,
-                    command_timeout=60,
+                    min_size=MIN_POOL_SIZE,
+                    max_size=MAX_POOL_SIZE,
+                    command_timeout=CONNECTION_TIMEOUT,
                     server_settings={
                         "application_name": "mem0ai_secure",
                     },
@@ -81,11 +97,11 @@ class SecureSupabaseClient:
                 await self._ensure_extensions()
                 self._initialized = True
                 logger.info("Secure database initialized successfully")
-                
+
         except Exception as e:
             logger.error("Failed to initialize secure database", error=str(e))
             await self._cleanup_on_error()
-            raise
+            raise RuntimeError(f"Failed to initialize secure database: {e}") from e
 
     async def close(self) -> None:
         """Close connections with proper cleanup."""
@@ -104,7 +120,7 @@ class SecureSupabaseClient:
         """Ensure required PostgreSQL extensions are enabled."""
         if not self.pool:
             raise RuntimeError("Connection pool not initialized")
-            
+
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
@@ -112,8 +128,8 @@ class SecureSupabaseClient:
                 logger.info("Database extensions ensured")
         except Exception as e:
             logger.error("Failed to ensure database extensions", error=str(e))
-            raise
-            
+            raise RuntimeError(f"Failed to ensure database extensions: {e}") from e
+
     async def _cleanup_on_error(self) -> None:
         """Cleanup resources on initialization error."""
         if self.pool:
@@ -128,8 +144,8 @@ class SecureSupabaseClient:
 
     # Secure CRUD operations
     async def secure_insert(
-        self, table: str, data: Dict[str, Any], user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, table: str, data: dict[str, Any], user_id: str | None = None
+    ) -> dict[str, Any]:
         """Insert data with encryption and auditing."""
         # Encrypt sensitive fields
         encrypted_data = self._encrypt_data(table, data)
@@ -161,26 +177,27 @@ class SecureSupabaseClient:
     async def secure_select(
         self,
         table: str,
-        filters: Optional[Dict[str, Any]] = None,
-        columns: Optional[List[str]] = None,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+        columns: list[str] | None = None,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Select data with decryption."""
         query = self.client.table(table).select(
             "*" if not columns else ",".join(columns)
         )
 
         # Apply filters (encrypt filter values if needed) with validation
+        if filters and len(filters) > MAX_FILTERS_LIMIT:  # Limit number of filters to prevent complex queries
+            raise ValueError(f"Too many filters (max {MAX_FILTERS_LIMIT})")
+
         if filters:
-            if len(filters) > 10:  # Limit number of filters to prevent complex queries
-                raise ValueError("Too many filters (max 10)")
 
             encrypted_filters = self._encrypt_filters(table, filters)
             for key, value in encrypted_filters.items():
                 # Additional validation for filter values
                 if value is None:
                     query = query.is_(key, None)
-                elif isinstance(value, (str, int, float, bool)):
+                elif isinstance(value, str | int | float | bool):
                     query = query.eq(key, value)
                 else:
                     raise ValueError(
@@ -210,9 +227,9 @@ class SecureSupabaseClient:
         self,
         table: str,
         record_id: str,
-        data: Dict[str, Any],
-        user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        data: dict[str, Any],
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         """Update data with encryption and auditing."""
         # Encrypt sensitive fields
         encrypted_data = self._encrypt_data(table, data)
@@ -240,7 +257,7 @@ class SecureSupabaseClient:
             raise RuntimeError(f"Failed to update {table} record {record_id}")
 
     async def secure_delete(
-        self, table: str, record_id: str, user_id: Optional[str] = None
+        self, table: str, record_id: str, user_id: str | None = None
     ) -> bool:
         """Delete data with auditing."""
         # Get record before deletion for audit
@@ -258,21 +275,13 @@ class SecureSupabaseClient:
             {"deleted_record": existing[0] if existing else None},
         )
 
-        return len(result.data) > 0
+        empty_result_count = 0
+        return len(result.data) > empty_result_count
 
-    # Vector operations
-    async def secure_vector_search(
-        self,
-        table: str,
-        vector: List[float],
-        limit: int = 10,
-        threshold: float = 0.8,
-        user_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Perform encrypted vector similarity search."""
-        # Encrypt the query vector
-        self.encryption.encrypt_vector(vector)
-
+    def _validate_vector_search_params(
+        self, table: str, vector: list[float], limit: int, threshold: float
+    ) -> str:
+        """Validate vector search parameters and return safe table name."""
         # Use parameterized SQL for vector operations (no table name interpolation)
         if table not in [
             "memories",
@@ -280,22 +289,56 @@ class SecureSupabaseClient:
         ]:  # whitelist allowed tables
             raise ValueError(f"Invalid table name: {table}")
 
-        if not isinstance(vector, list) or len(vector) != 1536:  # validate vector
-            raise ValueError("Vector must be a list of 1536 floats")
+        if not isinstance(vector, list) or len(vector) != VECTOR_DIMENSION:  # validate vector
+            raise ValueError(f"Vector must be a list of {VECTOR_DIMENSION} floats")
 
-        if not isinstance(limit, int) or limit <= 0 or limit > 1000:
-            raise ValueError("Limit must be between 1 and 1000")
+        min_search_limit = 1
+        if not isinstance(limit, int) or limit <= min_search_limit - 1 or limit > MAX_SEARCH_LIMIT:
+            raise ValueError(f"Limit must be between {min_search_limit} and {MAX_SEARCH_LIMIT}")
 
-        if not isinstance(threshold, (int, float)) or threshold < 0 or threshold > 1:
-            raise ValueError("Threshold must be between 0 and 1")
+        min_threshold = 0
+        max_threshold = 1
+        if not isinstance(threshold, int | float) or threshold < min_threshold or threshold > max_threshold:
+            raise ValueError(f"Threshold must be between {min_threshold} and {max_threshold}")
+
+        # Use safe table reference - never interpolate table names directly
+        return "public.memories" if table == "memories" else "mem0_vectors.memories"
+
+    def _decrypt_search_results(self, rows) -> list[dict[str, Any]]:
+        """Decrypt search results."""
+        results = []
+        for row in rows:
+            result = dict(row)
+
+            # Decrypt sensitive fields
+            if result.get("content"):
+                result["content"] = self.encryption.decrypt_data(result["content"])
+
+            if result.get("metadata"):
+                result["metadata"] = self.encryption.decrypt_json(
+                    result["metadata"]
+                )
+
+            results.append(result)
+        return results
+
+    # Vector operations
+    async def secure_vector_search(
+        self,
+        table: str,
+        vector: list[float],
+        limit: int = 10,
+        threshold: float = 0.8,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Perform encrypted vector similarity search."""
+        # Encrypt the query vector
+        self.encryption.encrypt_vector(vector)
+
+        # Validate parameters
+        table_name = self._validate_vector_search_params(table, vector, limit, threshold)
 
         async with self.pool.acquire() as conn:
-            # Use safe table reference - never interpolate table names directly
-            if table == "memories":
-                table_name = "public.memories"
-            else:
-                table_name = "mem0_vectors.memories"
-
             query = f"""
             SELECT id, content, embedding <-> $1::vector as distance, metadata
             FROM {table_name}
@@ -312,23 +355,10 @@ class SecureSupabaseClient:
             try:
                 rows = await conn.fetch(query, vector, 1.0 - threshold, limit)
             except Exception as e:
-                logger.error(f"Vector search query failed: {e}")
-                raise RuntimeError(f"Vector search failed: {str(e)}")
+                logger.error("Vector search query failed: %s", e)
+                raise RuntimeError(f"Vector search failed: {e!s}") from e
 
-            results = []
-            for row in rows:
-                result = dict(row)
-
-                # Decrypt sensitive fields
-                if result.get("content"):
-                    result["content"] = self.encryption.decrypt_data(result["content"])
-
-                if result.get("metadata"):
-                    result["metadata"] = self.encryption.decrypt_json(
-                        result["metadata"]
-                    )
-
-                results.append(result)
+            results = self._decrypt_search_results(rows)
 
         # Log operation
         await self._log_operation(
@@ -349,10 +379,10 @@ class SecureSupabaseClient:
         self,
         table: str,
         content: str,
-        vector: List[float],
-        metadata: Optional[Dict[str, Any]] = None,
-        user_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        vector: list[float],
+        metadata: dict[str, Any] | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         """Insert data with vector embedding."""
         data = {"content": content, "embedding": vector, "metadata": metadata or {}}
 
@@ -360,7 +390,7 @@ class SecureSupabaseClient:
 
     # Backup and restore
     async def create_encrypted_backup(
-        self, tables: List[str], user_id: Optional[str] = None
+        self, tables: list[str], user_id: str | None = None
     ) -> str:
         """Create encrypted backup of specified tables."""
         backup_data = {}
@@ -389,7 +419,7 @@ class SecureSupabaseClient:
         return encrypted_backup
 
     async def restore_encrypted_backup(
-        self, encrypted_backup: str, user_id: Optional[str] = None
+        self, encrypted_backup: str, user_id: str | None = None
     ) -> bool:
         """Restore from encrypted backup."""
         try:
@@ -431,17 +461,17 @@ class SecureSupabaseClient:
             return False
 
     # Private helper methods
-    def _encrypt_data(self, table: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _encrypt_data(self, table: str, data: dict[str, Any]) -> dict[str, Any]:
         """Encrypt sensitive fields in data."""
         encrypted_fields = self.encrypted_fields.get(table, [])
         return self.db_encryption.encrypt_row(data, encrypted_fields)
 
-    def _decrypt_data(self, table: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _decrypt_data(self, table: str, data: dict[str, Any]) -> dict[str, Any]:
         """Decrypt sensitive fields in data."""
         encrypted_fields = self.encrypted_fields.get(table, [])
         return self.db_encryption.decrypt_row(data, encrypted_fields)
 
-    def _encrypt_filters(self, table: str, filters: Dict[str, Any]) -> Dict[str, Any]:
+    def _encrypt_filters(self, table: str, filters: dict[str, Any]) -> dict[str, Any]:
         """Encrypt filter values for searchable encrypted fields with validation."""
         if not isinstance(table, str) or not table:
             raise ValueError("Table name must be a non-empty string")
@@ -466,8 +496,8 @@ class SecureSupabaseClient:
                 raise ValueError(f"Invalid column name: {key}")
 
             # Limit value length to prevent DoS
-            if isinstance(value, str) and len(value) > 1000:
-                raise ValueError(f"Filter value too long for {key}")
+            if isinstance(value, str) and len(value) > MAX_STRING_VALUE_LENGTH:
+                raise ValueError(f"Filter value too long for {key} (max {MAX_STRING_VALUE_LENGTH})")
 
             if key in encrypted_fields:
                 # For exact matches on encrypted fields, we need searchable encryption
@@ -477,8 +507,8 @@ class SecureSupabaseClient:
                         self.db_encryption.get_encrypted_search_hash(str(value), key)
                     )
                 except Exception as e:
-                    logger.error(f"Encryption failed for {key}: {e}")
-                    raise ValueError(f"Failed to encrypt filter for {key}")
+                    logger.error("Encryption failed for {key}: %s", e)
+                    raise ValueError(f"Failed to encrypt filter for {key}") from e
             else:
                 encrypted_filters[key] = value
 
@@ -488,9 +518,9 @@ class SecureSupabaseClient:
         self,
         operation: str,
         table: str,
-        record_id: Optional[str],
-        user_id: Optional[str],
-        details: Dict[str, Any],
+        record_id: str | None,
+        user_id: str | None,
+        details: dict[str, Any],
     ):
         """Log database operation for audit with input validation."""
         # Validate inputs to prevent log injection
@@ -504,11 +534,11 @@ class SecureSupabaseClient:
             raise ValueError(f"Invalid table name: {table}")
 
         if record_id is not None and (
-            not isinstance(record_id, str) or len(record_id) > 100
+            not isinstance(record_id, str) or len(record_id) > MAX_RECORD_ID_LENGTH
         ):
             raise ValueError(f"Invalid record_id: {record_id}")
 
-        if user_id is not None and (not isinstance(user_id, str) or len(user_id) > 100):
+        if user_id is not None and (not isinstance(user_id, str) or len(user_id) > MAX_USER_ID_LENGTH):
             raise ValueError(f"Invalid user_id: {user_id}")
 
         # Sanitize details to prevent injection in logs
@@ -516,20 +546,20 @@ class SecureSupabaseClient:
         for key, value in details.items():
             if (
                 isinstance(key, str)
-                and len(key) <= 50
+                and len(key) <= MAX_COLUMN_NAME_LENGTH
                 and key.replace("_", "").isalnum()
             ):
                 # Truncate large values and sanitize
                 if isinstance(value, str):
                     sanitized_details[key] = (
-                        value[:500]
-                        if len(value) <= 500
-                        else value[:500] + "...[truncated]"
+                        value[:MAX_TRUNCATED_VALUE_LENGTH]
+                        if len(value) <= MAX_TRUNCATED_VALUE_LENGTH
+                        else value[:MAX_TRUNCATED_VALUE_LENGTH] + "...[truncated]"
                     )
-                elif isinstance(value, (int, float, bool, type(None))):
+                elif isinstance(value, int | float | bool | type(None)):
                     sanitized_details[key] = value
                 else:
-                    sanitized_details[key] = str(value)[:100]
+                    sanitized_details[key] = str(value)[:MAX_LOG_VALUE_LENGTH]
 
         try:
             await audit_logger.log_event(
@@ -540,7 +570,7 @@ class SecureSupabaseClient:
                 details=sanitized_details,
             )
         except Exception as e:
-            logger.error(f"Failed to log audit event: {e}")
+            logger.error("Failed to log audit event: %s", e)
             # Don't raise - logging failure shouldn't break operations
 
     # Connection management
@@ -551,7 +581,7 @@ class SecureSupabaseClient:
             yield conn
 
     # Health check
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Check database connectivity and health."""
         try:
             # Test Supabase client
@@ -583,8 +613,8 @@ class SupabaseConnectionManager:
     """Manages Supabase connections with connection pooling and failover."""
 
     def __init__(self):
-        self.clients: Dict[str, SecureSupabaseClient] = {}
-        self.primary_client: Optional[SecureSupabaseClient] = None
+        self.clients: dict[str, SecureSupabaseClient] = {}
+        self.primary_client: SecureSupabaseClient | None = None
 
     async def get_client(self, database: str = "primary") -> SecureSupabaseClient:
         """Get or create secure Supabase client."""
@@ -605,7 +635,7 @@ class SupabaseConnectionManager:
         self.clients.clear()
         self.primary_client = None
 
-    async def health_check_all(self) -> Dict[str, Any]:
+    async def health_check_all(self) -> dict[str, Any]:
         """Health check for all clients."""
         results = {}
         for name, client in self.clients.items():
@@ -630,7 +660,39 @@ class EncryptionMigrator:
     def __init__(self, client: SecureSupabaseClient):
         self.client = client
 
-    async def migrate_table_to_encrypted(self, table: str, batch_size: int = 100):
+    async def _build_update_query(self, table: str, encrypted_data: dict, record_id: str) -> tuple[str, list]:
+        """Build update query for migration."""
+        update_fields = []
+        values = []
+        param_count = 1
+
+        for field, value in encrypted_data.items():
+            if field != "id":  # Don't update ID
+                update_fields.append(f"{field} = ${param_count}")
+                values.append(value)
+                param_count += 1
+
+        if update_fields:
+            query = f"UPDATE {table} SET {', '.join(update_fields)} WHERE id = ${param_count}"
+            values.append(record_id)
+            return query, values
+        return "", []
+
+    async def _process_migration_batch(self, conn, table: str, records) -> None:
+        """Process a batch of records for migration."""
+        for record in records:
+            record_dict = dict(record)
+            record_id = record_dict["id"]
+
+            # Encrypt sensitive fields
+            encrypted_data = self.client._encrypt_data(table, record_dict)
+
+            # Update record
+            query, values = await self._build_update_query(table, encrypted_data, record_id)
+            if query:
+                await conn.execute(query, *values)
+
+    async def migrate_table_to_encrypted(self, table: str, batch_size: int = DEFAULT_BATCH_SIZE):
         """Migrate existing table data to encrypted format."""
         # Get all records
         async with self.client.pool.acquire() as conn:
@@ -643,29 +705,7 @@ class EncryptionMigrator:
                     offset,
                 )
 
-                # Process each record
-                for record in records:
-                    record_dict = dict(record)
-                    record_id = record_dict["id"]
-
-                    # Encrypt sensitive fields
-                    encrypted_data = self.client._encrypt_data(table, record_dict)
-
-                    # Update record
-                    update_fields = []
-                    values = []
-                    param_count = 1
-
-                    for field, value in encrypted_data.items():
-                        if field != "id":  # Don't update ID
-                            update_fields.append(f"{field} = ${param_count}")
-                            values.append(value)
-                            param_count += 1
-
-                    if update_fields:
-                        query = f"UPDATE {table} SET {', '.join(update_fields)} WHERE id = ${param_count}"
-                        values.append(record_id)
-                        await conn.execute(query, *values)
+                await self._process_migration_batch(conn, table, records)
 
 
 

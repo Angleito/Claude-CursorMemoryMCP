@@ -13,7 +13,7 @@ NC='\033[0m'
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_DIR="/opt/mem0ai"
+INSTALL_DIR="/mem0ai"
 USER="mem0ai"
 
 # Function to print colored output

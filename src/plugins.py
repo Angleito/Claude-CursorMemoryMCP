@@ -14,12 +14,15 @@ import inspect
 import json
 import os
 import sys
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from abc import ABC
+from abc import abstractmethod
+from typing import TYPE_CHECKING
+from typing import Any
 
 import structlog
 
-from .config import Settings
+if TYPE_CHECKING:
+    from .config import Settings
 from .models import PluginConfig
 
 logger = structlog.get_logger()
@@ -27,13 +30,13 @@ logger = structlog.get_logger()
 
 class PluginBase(ABC):
     """Base class for all plugins.
-    
+
     All plugins must inherit from this class and implement the required methods.
     The plugin system provides configuration management, lifecycle control,
     and schema validation.
     """
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
         self.config = config or {}
         self.name = self.__class__.__name__
         self.version = getattr(self.__class__, "VERSION", "1.0.0")
@@ -46,22 +49,22 @@ class PluginBase(ABC):
 
     @abstractmethod
     async def execute(
-        self, data: Dict[str, Any], context: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, data: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Execute the plugin with given data."""
 
     async def cleanup(self) -> None:
         """Cleanup plugin resources.
-        
+
         Override this method to perform any necessary cleanup when the plugin
         is being unloaded or the system is shutting down.
         """
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         """Get the plugin's input/output schema."""
         return {"input": {"type": "object"}, "output": {"type": "object"}}
 
-    def get_info(self) -> Dict[str, Any]:
+    def get_info(self) -> dict[str, Any]:
         """Get plugin information."""
         return {
             "name": self.name,
@@ -74,45 +77,45 @@ class PluginBase(ABC):
 
 class MemoryPlugin(PluginBase):
     """Base class for memory-related plugins.
-    
+
     Memory plugins can process memory content during creation, update,
     or retrieval operations. They have access to the memory manager
     for advanced operations.
     """
 
-    def __init__(self, memory_manager: Any, config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, memory_manager: Any, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)
         self.memory_manager = memory_manager
 
 
 class SearchPlugin(PluginBase):
     """Base class for search enhancement plugins.
-    
+
     Search plugins can enhance search queries and filter results to provide
     better search experiences and more relevant results.
     """
 
-    async def enhance_query(self, query: str, context: Optional[Dict[str, Any]] = None) -> str:
+    async def enhance_query(self, query: str, context: dict[str, Any] | None = None) -> str:
         """Enhance search query.
-        
+
         Args:
             query: Original search query
             context: Optional context information
-            
+
         Returns:
             Enhanced query string
         """
         return query
 
     async def filter_results(
-        self, results: List[Dict[str, Any]], context: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, results: list[dict[str, Any]], context: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Filter search results.
-        
+
         Args:
             results: List of search results
             context: Optional context information
-            
+
         Returns:
             Filtered list of results
         """
@@ -121,16 +124,16 @@ class SearchPlugin(PluginBase):
 
 class NotificationPlugin(PluginBase):
     """Base class for notification plugins.
-    
+
     Notification plugins can send notifications via various channels
     such as email, SMS, webhooks, or push notifications.
     """
 
     async def send_notification(
-        self, message: str, recipient: str, data: Optional[Dict[str, Any]] = None
+        self, message: str, recipient: str, data: dict[str, Any] | None = None
     ) -> None:
         """Send notification.
-        
+
         Args:
             message: Notification message
             recipient: Recipient identifier (email, phone, etc.)
@@ -140,7 +143,7 @@ class NotificationPlugin(PluginBase):
 
 class PluginManager:
     """Manages plugin loading, execution, and lifecycle.
-    
+
     This class handles:
     - Dynamic plugin discovery and loading
     - Plugin configuration management
@@ -151,13 +154,13 @@ class PluginManager:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.plugins: Dict[str, PluginBase] = {}
-        self.plugin_configs: Dict[str, PluginConfig] = {}
+        self.plugins: dict[str, PluginBase] = {}
+        self.plugin_configs: dict[str, PluginConfig] = {}
         self.enabled = settings.enable_plugins
 
     async def load_plugins(self) -> None:
         """Load all plugins from the plugins directory.
-        
+
         This method discovers and loads all Python files in the plugins directory,
         instantiates plugin classes, and configures them.
         """
@@ -271,8 +274,8 @@ class PluginManager:
             )
 
     async def execute_plugin(
-        self, plugin_name: str, data: Dict[str, Any], user_id: str
-    ) -> Dict[str, Any]:
+        self, plugin_name: str, data: dict[str, Any], user_id: str
+    ) -> dict[str, Any]:
         """Execute a specific plugin."""
         if not self.enabled:
             raise ValueError("Plugins are disabled")
@@ -304,11 +307,11 @@ class PluginManager:
             logger.error("Plugin execution failed", plugin=plugin_name, error=str(e))
             raise
 
-    async def list_plugins(self) -> List[Dict[str, Any]]:
+    async def list_plugins(self) -> list[dict[str, Any]]:
         """List all available plugins."""
         return [plugin.get_info() for plugin in self.plugins.values()]
 
-    async def get_plugin_info(self, plugin_name: str) -> Optional[Dict[str, Any]]:
+    async def get_plugin_info(self, plugin_name: str) -> dict[str, Any] | None:
         """Get information about a specific plugin."""
         if plugin_name in self.plugins:
             return self.plugins[plugin_name].get_info()
@@ -525,7 +528,7 @@ class EmailNotifier(NotificationPlugin):
 
     async def close(self) -> None:
         """Close plugin manager and cleanup all plugins.
-        
+
         This method gracefully shuts down all plugins and cleans up resources.
         """
         for plugin in self.plugins.values():

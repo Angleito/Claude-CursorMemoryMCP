@@ -12,18 +12,29 @@ import asyncio
 import contextlib
 import time
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
+from typing import Any
 
 # Third-party imports
 import asyncpg
 import structlog
 from pgvector.asyncpg import register_vector
-from supabase import Client, create_client
+from supabase import Client
+from supabase import create_client
 
-# Local imports
-from .config import Settings
+if TYPE_CHECKING:
+    from .config import Settings
 
 logger = structlog.get_logger()
+
+# Constants for validation and limits
+DEFAULT_BATCH_SIZE = 1000
+MAX_MEMORY_SIZE = 1000000  # Maximum allowed memory size
+MAX_VECTOR_DIMENSION = 10000  # Maximum allowed vector dimension
+MAX_QUERY_LENGTH = 10000  # Maximum query length in characters
+MAX_PARAMETER_SIZE = 1000000  # 1MB limit per parameter
+MAX_PARAMETERS = 100  # Maximum number of query parameters
+SLOW_QUERY_THRESHOLD_MS = 1000  # Threshold for slow query logging (milliseconds)
 
 
 class DatabaseManager:
@@ -31,11 +42,11 @@ class DatabaseManager:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        self.supabase: Optional[Client] = None
-        self.pool: Optional[asyncpg.Pool] = None
+        self.supabase: Client | None = None
+        self.pool: asyncpg.Pool | None = None
         self._initialized: bool = False
         self._initialization_lock = asyncio.Lock()
-        self._stats: Dict[str, Union[int, Optional[datetime]]] = {
+        self._stats: dict[str, int | (datetime | None)] = {
             "total_queries": 0,
             "failed_queries": 0,
             "connection_errors": 0,
@@ -63,7 +74,7 @@ class DatabaseManager:
                     logger.info("Supabase client initialized")
                 except Exception as e:
                     logger.error("Failed to initialize Supabase client", error=str(e))
-                    raise
+                    raise RuntimeError("Failed to initialize Supabase client") from e
 
                 # Initialize asyncpg connection pool with optimized settings
                 try:
@@ -84,7 +95,7 @@ class DatabaseManager:
                     )
                 except Exception as e:
                     logger.error("Failed to initialize connection pool", error=str(e))
-                    raise
+                    raise RuntimeError("Failed to initialize connection pool") from e
 
                 # Register pgvector extension and create tables
                 async with self.pool.acquire() as conn:
@@ -97,7 +108,7 @@ class DatabaseManager:
                         logger.error(
                             "Failed to initialize database schema", error=str(e)
                         )
-                        raise
+                        raise RuntimeError("Failed to initialize database schema") from e
 
                 self._initialized = True
                 self._stats["last_health_check"] = datetime.now()
@@ -106,7 +117,7 @@ class DatabaseManager:
             except Exception as e:
                 logger.error("Failed to initialize database", error=str(e))
                 await self._cleanup_on_error()
-                raise
+                raise RuntimeError("Failed to initialize database") from e
 
     async def _cleanup_on_error(self) -> None:
         """Cleanup resources on initialization error."""
@@ -159,9 +170,9 @@ class DatabaseManager:
         max_size = self.settings.max_memory_size
         vector_dim = self.settings.vector_dimension
 
-        if not isinstance(max_size, int) or max_size <= 0 or max_size > 1000000:
+        if not isinstance(max_size, int) or max_size <= 0 or max_size > MAX_MEMORY_SIZE:
             raise ValueError(f"Invalid max_memory_size: {max_size}")
-        if not isinstance(vector_dim, int) or vector_dim <= 0 or vector_dim > 10000:
+        if not isinstance(vector_dim, int) or vector_dim <= 0 or vector_dim > MAX_VECTOR_DIMENSION:
             raise ValueError(f"Invalid vector_dimension: {vector_dim}")
 
         await conn.execute(
@@ -325,112 +336,79 @@ class DatabaseManager:
 
         logger.info("Database tables created successfully")
 
-    def _validate_query_security(self, query: str, args: tuple) -> None:
-        """Comprehensive security validation for SQL queries."""
+    def _validate_basic_query(self, query: str, args: tuple) -> str:
+        """Basic query validation."""
         if not isinstance(query, str):
             raise ValueError("Query must be a string")
 
-        if len(query) > 10000:  # Prevent extremely long queries
+        if len(query) > MAX_QUERY_LENGTH:
             raise ValueError("Query too long (max 10,000 characters)")
 
         if not query.strip():
             raise ValueError("Query cannot be empty")
 
-        # Normalize query for analysis
-        query_upper = query.upper().strip()
+        if len(args) > MAX_PARAMETERS:
+            raise ValueError("Too many parameters (max 100)")
 
-        # Check for dangerous SQL patterns
+        return query.upper().strip()
+
+    def _check_dangerous_patterns(self, query_upper: str) -> None:
+        """Check for dangerous SQL patterns."""
         dangerous_patterns = [
-            "DROP TABLE",
-            "DROP DATABASE",
-            "DROP SCHEMA",
-            "DROP INDEX",
-            "TRUNCATE",
-            "DELETE FROM users",
-            "DELETE FROM memories",
-            "ALTER TABLE",
-            "ALTER DATABASE",
-            "CREATE USER",
-            "DROP USER",
-            "GRANT",
-            "REVOKE",
-            "SET SESSION",
-            "SET GLOBAL",
-            "LOAD_FILE",
-            "INTO OUTFILE",
-            "INTO DUMPFILE",
-            "UNION SELECT",
-            "--",
-            "/*",
-            "*/",
-            "EXEC(",
-            "EXECUTE(",
-            "SP_",
-            "XP_",
+            "DROP TABLE", "DROP DATABASE", "DROP SCHEMA", "DROP INDEX",
+            "TRUNCATE", "DELETE FROM users", "DELETE FROM memories",
+            "ALTER TABLE", "ALTER DATABASE", "CREATE USER", "DROP USER",
+            "GRANT", "REVOKE", "SET SESSION", "SET GLOBAL",
+            "LOAD_FILE", "INTO OUTFILE", "INTO DUMPFILE", "UNION SELECT",
+            "--", "/*", "*/", "EXEC(", "EXECUTE(", "SP_", "XP_",
         ]
 
         for pattern in dangerous_patterns:
-            if pattern in query_upper:
-                # Allow safe patterns in specific contexts
-                if (
-                    pattern == "DROP TABLE"
-                    and "CREATE TABLE IF NOT EXISTS" in query_upper
-                ):
-                    continue
-                if pattern == "DROP TRIGGER" and "CREATE TRIGGER" in query_upper:
-                    continue
-                if pattern == "--" and query_upper.startswith("--"):
-                    continue  # Allow comment-only queries
+            if pattern not in query_upper:
+                continue
 
-                raise ValueError(
-                    f"Potentially dangerous SQL pattern detected: {pattern}"
-                )
+            # Allow safe patterns in specific contexts
+            if pattern == "DROP TABLE" and "CREATE TABLE IF NOT EXISTS" in query_upper:
+                continue
+            if pattern == "DROP TRIGGER" and "CREATE TRIGGER" in query_upper:
+                continue
+            if pattern == "--" and query_upper.startswith("--"):
+                continue
 
-        # Validate that parameterized queries are used properly
+            raise ValueError(f"Potentially dangerous SQL pattern detected: {pattern}")
+
+    def _validate_parameters(self, query: str, args: tuple) -> None:
+        """Validate query parameters."""
         if len(args) > 0 and not any(f"${i+1}" in query for i, _ in enumerate(args)):
             logger.warning("Query parameter mismatch detected", query=query[:100])
 
-        # Check for SQL injection patterns in parameters
         for i, arg in enumerate(args):
-            if isinstance(arg, str):
-                if len(arg) > 1000000:  # 1MB limit per parameter
-                    raise ValueError(f"Parameter {i} too large")
+            if not isinstance(arg, str):
+                continue
 
-                # Check for SQL injection attempts in string parameters
-                dangerous_in_params = ["';", '";', "/*", "*/", "--", "UNION", "SELECT"]
-                arg_upper = arg.upper()
-                for dangerous in dangerous_in_params:
-                    if dangerous in arg_upper:
-                        logger.warning(
-                            f"Potentially dangerous content in parameter {i}",
-                            content=arg[:50],
-                        )
-                        # Don't raise exception as this might be legitimate content
+            if len(arg) > MAX_PARAMETER_SIZE:
+                raise ValueError(f"Parameter {i} too large")
 
-        # Ensure query starts with expected operations
+            # Check for SQL injection attempts
+            dangerous_in_params = ["';", '";', "/*", "*/", "--", "UNION", "SELECT"]
+            arg_upper = arg.upper()
+            for dangerous in dangerous_in_params:
+                if dangerous in arg_upper:
+                    logger.warning(
+                        "Potentially dangerous content in parameter %s",
+                        i, content=arg[:50]
+                    )
+
+    def _validate_query_type(self, query_upper: str) -> None:
+        """Validate query starts with allowed operation."""
         allowed_start_patterns = [
-            "SELECT",
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "WITH",
-            "CREATE TABLE",
-            "CREATE INDEX",
-            "CREATE TRIGGER",
-            "CREATE FUNCTION",
-            "DROP TRIGGER",
-            "DROP INDEX",  # Only if followed by CREATE
-            "EXPLAIN",
-            "ANALYZE",
-            "--",  # Comments
+            "SELECT", "INSERT", "UPDATE", "DELETE", "WITH",
+            "CREATE TABLE", "CREATE INDEX", "CREATE TRIGGER", "CREATE FUNCTION",
+            "DROP TRIGGER", "DROP INDEX", "EXPLAIN", "ANALYZE", "--",
         ]
 
-        if not any(
-            query_upper.startswith(pattern) for pattern in allowed_start_patterns
-        ):
-            raise ValueError(
-                f"Query starts with disallowed operation: {query_upper[:20]}"
-            )
+        if not any(query_upper.startswith(pattern) for pattern in allowed_start_patterns):
+            raise ValueError(f"Query starts with disallowed operation: {query_upper[:20]}")
 
         # Additional validation for specific operations
         if query_upper.startswith("DELETE") and "WHERE" not in query_upper:
@@ -439,9 +417,19 @@ class DatabaseManager:
         if query_upper.startswith("UPDATE") and "WHERE" not in query_upper:
             raise ValueError("UPDATE queries must include WHERE clause")
 
-        # Limit number of parameters to prevent DoS
-        if len(args) > 100:
-            raise ValueError("Too many parameters (max 100)")
+    def _validate_query_security(self, query: str, args: tuple) -> None:
+        """Comprehensive security validation for SQL queries."""
+        # Basic validation
+        query_upper = self._validate_basic_query(query, args)
+
+        # Check dangerous patterns
+        self._check_dangerous_patterns(query_upper)
+
+        # Validate parameters
+        self._validate_parameters(query, args)
+
+        # Validate query type
+        self._validate_query_type(query_upper)
 
     @contextlib.asynccontextmanager
     async def get_connection(self):
@@ -456,7 +444,7 @@ class DatabaseManager:
         except Exception as e:
             self._stats["connection_errors"] += 1
             logger.error("Connection error", error=str(e))
-            raise
+            raise RuntimeError("Database connection error") from e
         finally:
             if conn and self.pool:
                 try:
@@ -476,11 +464,11 @@ class DatabaseManager:
             except Exception as e:
                 await transaction.rollback()
                 logger.error("Transaction rolled back", error=str(e))
-                raise
+                raise RuntimeError("Transaction failed") from e
 
     async def execute_query(
-        self, query: str, *args: Any, timeout: Optional[float] = None
-    ) -> List[asyncpg.Record]:
+        self, query: str, *args: Any, timeout: float | None = None
+    ) -> list[asyncpg.Record]:
         """Execute a query and return the result with comprehensive security validation."""
         # Comprehensive input validation
         self._validate_query_security(query, args)
@@ -493,7 +481,7 @@ class DatabaseManager:
                 )
                 self._stats["total_queries"] += 1
                 execution_time = (time.time() - start_time) * 1000
-                if execution_time > 1000:  # Log slow queries
+                if execution_time > SLOW_QUERY_THRESHOLD_MS:  # Log slow queries
                     logger.warning(
                         "Slow query detected",
                         query=query[:100],
@@ -511,8 +499,8 @@ class DatabaseManager:
             raise
 
     async def execute_one(
-        self, query: str, *args: Any, timeout: Optional[float] = None
-    ) -> Optional[asyncpg.Record]:
+        self, query: str, *args: Any, timeout: float | None = None
+    ) -> asyncpg.Record | None:
         """Execute a query and return a single result with security validation."""
         # Comprehensive input validation
         self._validate_query_security(query, args)
@@ -525,7 +513,7 @@ class DatabaseManager:
                 )
                 self._stats["total_queries"] += 1
                 execution_time = (time.time() - start_time) * 1000
-                if execution_time > 1000:
+                if execution_time > DEFAULT_BATCH_SIZE:
                     logger.warning(
                         "Slow query detected",
                         query=query[:100],
@@ -535,15 +523,15 @@ class DatabaseManager:
         except Exception as e:
             self._stats["failed_queries"] += 1
             logger.error("Query execution failed", query=query[:100], error=str(e))
-            raise
+            raise RuntimeError("Query execution failed") from e
 
     async def execute_command(
-        self, query: str, *args: Any, timeout: Optional[float] = None
+        self, query: str, *args: Any, timeout: float | None = None
     ) -> str:
         """Execute a command and return status with security validation."""
         # Validate query security
         self._validate_query_security(query, args)
-        
+
         start_time = time.time()
         try:
             async with self.get_connection() as conn:
@@ -552,7 +540,7 @@ class DatabaseManager:
                 )
                 self._stats["total_queries"] += 1
                 execution_time = (time.time() - start_time) * 1000
-                if execution_time > 1000:
+                if execution_time > DEFAULT_BATCH_SIZE:
                     logger.warning(
                         "Slow command detected",
                         query=query[:100],
@@ -562,16 +550,16 @@ class DatabaseManager:
         except Exception as e:
             self._stats["failed_queries"] += 1
             logger.error("Command execution failed", query=query[:100], error=str(e))
-            raise
+            raise RuntimeError("Command execution failed") from e
 
     async def execute_batch(
-        self, queries: List[Tuple[str, Tuple[Any, ...]]], timeout: Optional[float] = None
-    ) -> List[str]:
+        self, queries: list[tuple[str, tuple[Any, ...]]], timeout: float | None = None
+    ) -> list[str]:
         """Execute multiple commands in a transaction with validation."""
         # Validate all queries before executing any
         for query, args in queries:
             self._validate_query_security(query, args)
-            
+
         try:
             async with self.get_transaction() as conn:
                 results = []
@@ -581,16 +569,16 @@ class DatabaseManager:
                     )
                     results.append(result)
                 self._stats["total_queries"] += len(queries)
-                logger.info(f"Executed batch of {len(queries)} queries successfully")
+                logger.info("Executed batch of %s queries successfully", len(queries))
                 return results
         except Exception as e:
             self._stats["failed_queries"] += len(queries)
             logger.error(
                 "Batch execution failed", error=str(e), batch_size=len(queries)
             )
-            raise
+            raise RuntimeError("Batch execution failed") from e
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         """Perform comprehensive health check."""
         health = {
             "database_connected": False,
@@ -617,7 +605,7 @@ class DatabaseManager:
 
         return health
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """Get database statistics."""
         stats = self._stats.copy()
         if self.pool:
@@ -639,7 +627,7 @@ class DatabaseManager:
                 logger.info(
                     "Database connections closed gracefully", final_stats=self._stats
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Database pool close timed out")
             except Exception as e:
                 logger.error("Error closing database pool", error=str(e))

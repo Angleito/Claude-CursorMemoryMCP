@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Advanced Similarity Search Optimization for mem0ai
+"""Advanced Similarity Search Optimization for mem0ai.
+
 Production-grade search optimization with multiple algorithms and caching.
 """
 
@@ -12,10 +13,10 @@ import pickle
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union
 
 import asyncpg
 import faiss
@@ -73,14 +74,14 @@ class SearchQuery:
     """Search query parameters."""
 
     user_id: str
-    query_embedding: Union[List[float], np.ndarray]
-    query_text: Optional[str] = None
-    memory_types: Optional[List[str]] = None
-    metadata_filters: Optional[Dict] = None
-    min_importance: Optional[float] = None
-    max_age_hours: Optional[float] = None
-    exclude_memory_ids: Optional[List[str]] = None
-    config: Optional[SearchConfig] = None
+    query_embedding: list[float] | np.ndarray
+    query_text: str | None = None
+    memory_types: list[str] | None = None
+    metadata_filters: dict | None = None
+    min_importance: float | None = None
+    max_age_hours: float | None = None
+    exclude_memory_ids: list[str] | None = None
+    config: SearchConfig | None = None
 
 
 @dataclass
@@ -92,7 +93,7 @@ class SearchResult:
     similarity_score: float
     importance_score: float
     memory_type: str
-    metadata: Dict
+    metadata: dict
     created_at: datetime
     last_accessed: datetime
     access_count: int
@@ -103,7 +104,7 @@ class SearchResult:
 class SearchResponse:
     """Complete search response."""
 
-    results: List[SearchResult]
+    results: list[SearchResult]
     total_found: int
     search_time_ms: float
     algorithm_used: SearchAlgorithm
@@ -142,7 +143,7 @@ class SearchCache:
         hash_key = hashlib.sha256(key_str.encode()).hexdigest()
         return f"search_cache:{hash_key}"
 
-    async def get(self, query: SearchQuery) -> Optional[SearchResponse]:
+    async def get(self, query: SearchQuery) -> SearchResponse | None:
         """Get cached search results."""
         if not self.redis_client or not query.config.use_cache:
             return None
@@ -163,7 +164,7 @@ class SearchCache:
                     query_id=data["query_id"],
                 )
         except Exception as e:
-            logger.warning(f"Cache get error: {e}")
+            logger.warning("Cache get error: %s", e)
         return None
 
     async def set(self, query: SearchQuery, response: SearchResponse):
@@ -194,7 +195,7 @@ class SearchCache:
             )
 
         except Exception as e:
-            logger.warning(f"Cache set error: {e}")
+            logger.warning("Cache set error: %s", e)
 
     async def close(self):
         """Close Redis connection."""
@@ -245,18 +246,18 @@ class FAISSIndexManager:
             self.user_mappings[key] = list(range(len(embeddings)))
 
             logger.info(
-                f"Created FAISS {algorithm.value} index for user {user_id} "
-                f"with {len(embeddings)} vectors"
+                "Created FAISS %s index for user %s with %d vectors",
+                algorithm.value, user_id, len(embeddings)
             )
 
     def search(
         self,
         user_id: str,
         algorithm: SearchAlgorithm,
-        query_embedding: Union[np.ndarray, List[float]],
+        query_embedding: np.ndarray | list[float],
         k: int,
         nprobe: int = 10,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Search FAISS index."""
         key = f"{user_id}_{algorithm.value}"
 
@@ -278,7 +279,7 @@ class FAISSIndexManager:
             query_array = np.array(query_embedding, dtype=np.float32)
         else:
             query_array = query_embedding.astype(np.float32)
-        
+
         query_normalized = np.ascontiguousarray(query_array.reshape(1, -1))
         faiss.normalize_L2(query_normalized)
 
@@ -336,7 +337,7 @@ class SimilaritySearchOptimizer:
         if self.db_pool:
             await self.db_pool.close()
 
-    async def _load_user_embeddings(self, user_id: str) -> Tuple[List[str], np.ndarray]:
+    async def _load_user_embeddings(self, user_id: str) -> tuple[list[str], np.ndarray]:
         """Load all embeddings for a user from database."""
         async with self.db_pool.acquire() as conn:
             rows = await conn.fetch(
@@ -362,7 +363,7 @@ class SimilaritySearchOptimizer:
         memory_ids, embeddings = await self._load_user_embeddings(user_id)
 
         if len(embeddings) == 0:
-            logger.warning(f"No embeddings found for user {user_id}")
+            logger.warning("No embeddings found for user %s", user_id)
             return
 
         # Build index in thread pool to avoid blocking
@@ -376,7 +377,7 @@ class SimilaritySearchOptimizer:
                 embeddings,
             )
 
-    async def _exact_search(self, query: SearchQuery) -> List[SearchResult]:
+    async def _exact_search(self, query: SearchQuery) -> list[SearchResult]:
         """Perform exact search using database."""
         conditions = ["m.user_id = $1"]
         params = [query.user_id]
@@ -469,15 +470,15 @@ class SimilaritySearchOptimizer:
 
             return results
 
-    async def _faiss_search(self, query: SearchQuery) -> List[SearchResult]:
+    async def _faiss_search(self, query: SearchQuery) -> list[SearchResult]:
         """Perform search using FAISS index."""
         algorithm = query.config.algorithm
 
         # Build index if it doesn't exist
         try:
             query_embedding_array = (
-                query.query_embedding 
-                if isinstance(query.query_embedding, np.ndarray) 
+                query.query_embedding
+                if isinstance(query.query_embedding, np.ndarray)
                 else np.array(query.query_embedding, dtype=np.float32)
             )
             similarities, indices = self.faiss_manager.search(
@@ -503,7 +504,7 @@ class SimilaritySearchOptimizer:
 
         # Filter results by similarity threshold
         valid_results = []
-        for sim, idx in zip(similarities, indices):
+        for sim, idx in zip(similarities, indices, strict=False):
             if idx < len(memory_ids) and sim >= query.config.similarity_threshold:
                 valid_results.append((memory_ids[idx], float(sim)))
 
@@ -556,8 +557,8 @@ class SimilaritySearchOptimizer:
             return results
 
     def _rerank_results(
-        self, results: List[SearchResult], config: SearchConfig
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult], config: SearchConfig
+    ) -> list[SearchResult]:
         """Apply advanced reranking to search results."""
         if not config.enable_reranking or not results:
             return results
@@ -599,8 +600,8 @@ class SimilaritySearchOptimizer:
         return results[: config.top_k]
 
     def _apply_diversity(
-        self, results: List[SearchResult], diversity_lambda: float
-    ) -> List[SearchResult]:
+        self, results: list[SearchResult], diversity_lambda: float
+    ) -> list[SearchResult]:
         """Apply maximal marginal relevance for diverse results."""
         if len(results) <= 1:
             return results
@@ -649,12 +650,12 @@ class SimilaritySearchOptimizer:
 
         # Generate query ID
         embedding_sample = (
-            query.query_embedding[:5] 
-            if isinstance(query.query_embedding, list) 
+            query.query_embedding[:5]
+            if isinstance(query.query_embedding, list)
             else query.query_embedding.flatten()[:5].tolist()
         )
-        query_id = hashlib.md5(
-            f"{query.user_id}_{time.time()}_{embedding_sample}".encode()
+        query_id = hashlib.sha256(
+            f"{query.user_id}_{time.time()}_{embedding_sample}".encode(), usedforsecurity=False
         ).hexdigest()
 
         # Check cache first
@@ -689,7 +690,8 @@ class SimilaritySearchOptimizer:
                             combined_results.append(result)
                             seen_ids.add(result.memory_id)
                     results = combined_results
-                except:
+                except Exception as err:
+                    logger.warning("FAISS search failed, falling back to exact search: %s", err)
                     results = exact_results
 
                 query.config.algorithm = SearchAlgorithm.HYBRID
@@ -718,7 +720,7 @@ class SimilaritySearchOptimizer:
             return response
 
         except Exception as e:
-            logger.error(f"Search error: {e}")
+            logger.error("Search error: %s", e)
             # Return empty response on error
             return SearchResponse(
                 results=[],
@@ -743,7 +745,7 @@ class SimilaritySearchOptimizer:
                 user_id,
             )
 
-    async def get_search_analytics(self, user_id: str, hours: int = 24) -> Dict:
+    async def get_search_analytics(self, user_id: str, hours: int = 24) -> dict:
         """Get search analytics for user."""
         # This would typically be implemented with proper analytics tracking
         # For now, return basic stats
@@ -772,10 +774,10 @@ class SimilaritySearchOptimizer:
 # Example usage
 async def main():
     """Test the similarity search optimizer."""
-    DB_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+    db_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/mem0ai")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-    optimizer = SimilaritySearchOptimizer(DB_URL, REDIS_URL)
+    optimizer = SimilaritySearchOptimizer(db_url, redis_url)
 
     try:
         await optimizer.initialize()
@@ -800,11 +802,11 @@ async def main():
 
 
         for i, result in enumerate(response.results[:5]):
-            logger.info(f"Result {i}: {result.memory_text[:50]}... (score: {result.similarity_score:.3f})")
+            logger.info("Result %d: %s... (score: %.3f)", i, result.memory_text[:50], result.similarity_score)
 
         # Get analytics
         analytics = await optimizer.get_search_analytics("test_user")
-        logger.info(f"Search analytics: {analytics}")
+        logger.info("Search analytics: %s", analytics)
 
     finally:
         await optimizer.cleanup()

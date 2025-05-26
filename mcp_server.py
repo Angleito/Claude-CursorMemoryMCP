@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Mem0 AI MCP Server - Production-ready memory vector database server
+"""Mem0 AI MCP Server - Production-ready memory vector database server.
+
 Integrates with Claude Code and Cursor through Model Context Protocol.
 """
 
@@ -7,7 +8,6 @@ import asyncio
 import json
 import sys
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import structlog
 import uvicorn
@@ -57,10 +57,10 @@ logger = structlog.get_logger()
 
 # Global instances
 settings = Settings()
-memory_manager: Optional[MemoryManager] = None
-mcp_server: Optional[MCPServer] = None
+memory_manager: MemoryManager | None = None
+mcp_server: MCPServer | None = None
 connection_manager = ConnectionManager()
-plugin_manager: Optional[PluginManager] = None
+plugin_manager: PluginManager | None = None
 
 
 @asynccontextmanager
