@@ -30,35 +30,38 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install -r requirements.txt
+          uv sync --all-extras --dev
 
       - name: Run Ruff (linter)
         run: |
-          ruff check . --output-format=github
-          ruff format --check .
+          uv run ruff check . --output-format=github
+          uv run ruff format --check .
 
       - name: Run Black (formatter check)
         run: |
-          black --check --diff .
+          uv run black --check --diff .
 
       - name: Run isort (import sorting check)
         run: |
-          isort --check-only --diff .
+          uv run isort --check-only --diff .
 
       - name: Run MyPy (type checking)
         run: |
-          mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
+          uv run mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
 
       - name: Run Bandit (security linting)
         run: |
-          bandit -r . -f json -o bandit-report.json
-          bandit -r . -f txt
+          uv run bandit -r . -f json -o bandit-report.json
+          uv run bandit -r . -f txt
 
       - name: Upload Bandit results
         uses: actions/upload-artifact@v4
@@ -81,16 +84,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install bandit[toml] safety semgrep
+          uv sync --all-extras --dev
 
       - name: Run Bandit (security)
         run: |
-          bandit -r . -f sarif -o bandit.sarif
+          uv run bandit -r . -f sarif -o bandit.sarif
         continue-on-error: true
 
       - name: Upload Bandit SARIF
@@ -101,7 +108,7 @@ jobs:
 
       - name: Run Safety (dependency vulnerabilities)
         run: |
-          safety check --json --output safety-report.json
+          uv run safety check --json --output safety-report.json
         continue-on-error: true
 
       - name: Upload Safety results
@@ -113,7 +120,7 @@ jobs:
 
       - name: Run Semgrep
         run: |
-          semgrep --config=auto --json --output=semgrep.json .
+          uv run semgrep --config=auto --json --output=semgrep.json .
         continue-on-error: true
 
       - name: Upload Semgrep results
@@ -137,26 +144,29 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          pip install vulture radon xenon
+          uv sync --all-extras --dev
 
       - name: Run Vulture (dead code detection)
         run: |
-          vulture src/ auth/ security/ monitoring/ --min-confidence 80
+          uv run vulture src/ auth/ security/ monitoring/ --min-confidence 80
 
       - name: Run Radon (complexity analysis)
         run: |
-          radon cc src/ auth/ security/ monitoring/ -a
-          radon mi src/ auth/ security/ monitoring/
+          uv run radon cc src/ auth/ security/ monitoring/ -a
+          uv run radon mi src/ auth/ security/ monitoring/
 
       - name: Run Xenon (complexity monitoring)
         run: |
-          xenon --max-absolute B --max-modules A --max-average A src/ auth/ security/ monitoring/
+          uv run xenon --max-absolute B --max-modules A --max-average A src/ auth/ security/ monitoring/
 
   docker-lint:
     name: Docker Lint
@@ -199,10 +209,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --dev
+
       - name: Run yamllint
         run: |
-          pip install yamllint
-          yamllint .
+          uv run yamllint .
 
   sql-lint:
     name: SQL Lint
@@ -217,13 +240,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install SQLFluff
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
         run: |
-          pip install sqlfluff
+          uv sync --all-extras --dev
 
       - name: Run SQLFluff
         run: |
-          sqlfluff lint --dialect postgres *.sql config/postgres/*.sql
+          uv run sqlfluff lint --dialect postgres *.sql config/postgres/*.sql
 
   pre-commit:
     name: Pre-commit Hooks
@@ -237,12 +265,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
 
-      - name: Install pre-commit
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
         run: |
-          pip install pre-commit
+          uv sync --all-extras --dev
 
       - name: Run pre-commit
         run: |
-          pre-commit run --all-files
+          uv run pre-commit run --all-files

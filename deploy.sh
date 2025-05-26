@@ -86,7 +86,13 @@ install_dependencies() {
         gnupg \
         lsb-release \
         software-properties-common \
-        apt-transport-https
+        apt-transport-https \
+        python3 \
+        python3-pip \
+        python3-venv
+    
+    # Install uv (modern Python package manager)
+    install_uv
     
     # Install Docker
     if ! command -v docker &> /dev/null; then
@@ -107,6 +113,33 @@ install_dependencies() {
     fi
     
     print_success "Dependencies installed successfully"
+}
+
+# Function to install uv
+install_uv() {
+    print_status "Installing uv (modern Python package manager)..."
+    
+    if ! command -v uv &> /dev/null; then
+        # Install uv using the official installer
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        
+        # Add uv to PATH for current session
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        # Add uv to system PATH
+        echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> /etc/environment
+        
+        # Verify installation
+        if command -v uv &> /dev/null; then
+            print_success "uv installed successfully"
+            uv --version
+        else
+            print_warning "uv installation may have failed, falling back to pip"
+        fi
+    else
+        print_success "uv is already installed"
+        uv --version
+    fi
 }
 
 # Function to create system user

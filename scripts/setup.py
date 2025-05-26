@@ -56,35 +56,91 @@ class Mem0Setup:
         if version.major == 3 and version.minor < 12:
             print(f"⚠️  Consider upgrading to Python 3.12+ for better performance and latest features")
 
+    def install_uv(self):
+        """Install uv if not already available."""
+        try:
+            subprocess.run(["uv", "--version"], capture_output=True, check=True)
+            print("✓ uv is already installed")
+            return
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+            
+        print("📥 Installing uv...")
+        try:
+            # Install uv using the official installer
+            install_script = subprocess.run(
+                ["curl", "-LsSf", "https://astral.sh/uv/install.sh"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            subprocess.run(
+                ["sh"],
+                input=install_script.stdout,
+                text=True,
+                check=True
+            )
+            
+            # Verify installation
+            subprocess.run(["uv", "--version"], capture_output=True, check=True)
+            print("✓ uv installed successfully")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠️  Failed to install uv automatically: {e}")
+            print("Please install uv manually: https://docs.astral.sh/uv/getting-started/installation/")
+            print("Continuing with pip as fallback...")
+
     def install_dependencies(self):
-        """Install Python dependencies."""
+        """Install Python dependencies using uv with pip fallback."""
         print("\n📦 Installing dependencies...")
 
         requirements_file = self.project_root / "requirements.txt"
         if not requirements_file.exists():
             raise FileNotFoundError("requirements.txt not found")
 
+        # First ensure uv is installed
+        self.install_uv()
+
         try:
-            # Try uv first, fall back to pip if uv is not available
+            # Try uv first - create venv and install dependencies
+            print("🚀 Using uv for dependency management...")
+            
+            # Create virtual environment with uv
             try:
                 subprocess.run(
-                    ["uv", "pip", "install", "-r", str(requirements_file)],
+                    ["uv", "venv", ".venv"],
+                    cwd=self.project_root,
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-            except FileNotFoundError:
-                # Fallback to pip if uv is not available
+                print("✓ Virtual environment created with uv")
+            except subprocess.CalledProcessError:
+                print("⚠️  Virtual environment may already exist")
+            
+            # Install dependencies with uv
+            subprocess.run(
+                ["uv", "pip", "install", "-r", str(requirements_file)],
+                cwd=self.project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            print("✓ Dependencies installed with uv")
+            
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            print(f"⚠️  uv installation failed: {e}")
+            print("🔄 Falling back to pip...")
+            try:
                 subprocess.run(
                     [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-            print("✓ Dependencies installed")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to install dependencies: {e.stderr}")
-            raise
+                print("✓ Dependencies installed with pip (fallback)")
+            except subprocess.CalledProcessError as pip_error:
+                print(f"❌ Failed to install dependencies: {pip_error.stderr}")
+                raise
 
     def create_directories(self):
         """Create necessary directories."""

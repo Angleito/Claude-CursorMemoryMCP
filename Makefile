@@ -9,58 +9,57 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Installation targets
-install: ## Install production dependencies
-	pip install -r requirements.txt
+install: ## Install production dependencies with uv
+	uv sync --no-dev
 
-install-dev: ## Install development dependencies
-	pip install -r requirements-dev.txt
-	pip install -r requirements.txt
-	pre-commit install
+install-dev: ## Install development dependencies with uv
+	uv sync
+	uv run pre-commit install
 
 # Development setup
 setup-dev: install-dev ## Complete development environment setup
 	@echo "Setting up development environment..."
-	pre-commit install --install-hooks
+	uv run pre-commit install --install-hooks
 	@echo "Creating .secrets.baseline for detect-secrets..."
-	detect-secrets scan --baseline .secrets.baseline
+	uv run detect-secrets scan --baseline .secrets.baseline
 	@echo "Development environment setup complete!"
 
 # Linting and formatting
 lint: ## Run all linting checks
 	@echo "Running Ruff linter..."
-	ruff check .
+	uv run ruff check .
 	@echo "Running Ruff formatter check..."
-	ruff format --check .
+	uv run ruff format --check .
 	@echo "Running Black formatter check..."
-	black --check .
+	uv run black --check .
 	@echo "Running isort import check..."
-	isort --check-only .
+	uv run isort --check-only .
 
 lint-fix: ## Run linting with auto-fix
 	@echo "Running Ruff with auto-fix..."
-	ruff check . --fix
+	uv run ruff check . --fix
 	@echo "Running Ruff formatter..."
-	ruff format .
+	uv run ruff format .
 	@echo "Running Black formatter..."
-	black .
+	uv run black .
 	@echo "Running isort..."
-	isort .
+	uv run isort .
 
 format: lint-fix ## Alias for lint-fix
 
 # Type checking
 type-check: ## Run MyPy type checking
 	@echo "Running MyPy type checking..."
-	mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
+	uv run mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
 
 # Security scanning
 security: ## Run security scans
 	@echo "Running Bandit security scan..."
-	bandit -r . -f txt
+	uv run bandit -r . -f txt
 	@echo "Running Safety dependency check..."
-	safety check
+	uv run safety check
 	@echo "Detecting secrets..."
-	detect-secrets scan --baseline .secrets.baseline
+	uv run detect-secrets scan --baseline .secrets.baseline
 
 security-report: ## Generate detailed security reports
 	@echo "Generating Bandit JSON report..."

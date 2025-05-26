@@ -63,40 +63,116 @@ create_directories() {
     log_success "Directories created"
 }
 
+# Install uv if not available
+install_uv() {
+    log_info "Checking for uv installation..."
+    
+    if command -v uv &> /dev/null; then
+        log_success "uv is already installed"
+        uv --version
+        return 0
+    fi
+    
+    log_info "Installing uv (modern Python package manager)..."
+    
+    # Install uv using the official installer
+    if curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        # Add uv to PATH for current session
+        export PATH="$HOME/.cargo/bin:$PATH"
+        
+        # Verify installation
+        if command -v uv &> /dev/null; then
+            log_success "uv installed successfully"
+            uv --version
+            return 0
+        else
+            log_warning "uv installation may have failed"
+            return 1
+        fi
+    else
+        log_warning "Failed to install uv"
+        return 1
+    fi
+}
+
 # Install development dependencies
 install_dependencies() {
     log_info "Installing development dependencies..."
     
-    # Upgrade pip first
-    python3 -m pip install --upgrade pip
+    # Try to install uv first
+    if install_uv; then
+        log_info "Using uv for package management"
+        UV_AVAILABLE=true
+        
+        # Create virtual environment with uv if it doesn't exist
+        if [[ ! -d ".venv" ]]; then
+            log_info "Creating virtual environment with uv..."
+            uv venv .venv
+            log_success "Virtual environment created"
+        fi
+    else
+        log_warning "uv not available, falling back to pip"
+        UV_AVAILABLE=false
+        python3 -m pip install --upgrade pip
+    fi
     
-    # Install requirements
-    if [[ -f "requirements-dev.txt" ]]; then
-        python3 -m pip install -r requirements-dev.txt
+    # Install requirements using modern uv approach
+    if [[ -f "pyproject.toml" ]] && [[ "$UV_AVAILABLE" == "true" ]]; then
+        log_info "Installing dependencies with uv sync..."
+        uv sync
+        log_success "Dependencies installed with uv sync"
+    elif [[ -f "requirements-dev.txt" ]]; then
+        if [[ "$UV_AVAILABLE" == "true" ]]; then
+            uv pip install -r requirements-dev.txt
+        else
+            python3 -m pip install -r requirements-dev.txt
+        fi
         log_success "Development dependencies installed"
     else
         log_warning "requirements-dev.txt not found, installing core linting tools..."
-        python3 -m pip install \
-            ruff>=0.1.9 \
-            black>=23.12.0 \
-            isort>=5.13.0 \
-            mypy>=1.8.0 \
-            bandit[toml]>=1.7.5 \
-            safety>=2.3.0 \
-            vulture>=2.10 \
-            radon>=6.0.1 \
-            xenon>=0.9.1 \
-            pre-commit>=3.6.0 \
-            detect-secrets>=1.4.0 \
-            pytest>=7.4.0 \
-            pytest-cov>=4.1.0 \
-            yamllint>=1.33.0
+        if [[ "$UV_AVAILABLE" == "true" ]]; then
+            uv pip install \
+                ruff>=0.1.9 \
+                black>=23.12.0 \
+                isort>=5.13.0 \
+                mypy>=1.8.0 \
+                "bandit[toml]>=1.7.5" \
+                safety>=2.3.0 \
+                vulture>=2.10 \
+                radon>=6.0.1 \
+                xenon>=0.9.1 \
+                pre-commit>=3.6.0 \
+                detect-secrets>=1.4.0 \
+                pytest>=7.4.0 \
+                pytest-cov>=4.1.0 \
+                yamllint>=1.33.0
+        else
+            python3 -m pip install \
+                ruff>=0.1.9 \
+                black>=23.12.0 \
+                isort>=5.13.0 \
+                mypy>=1.8.0 \
+                bandit[toml]>=1.7.5 \
+                safety>=2.3.0 \
+                vulture>=2.10 \
+                radon>=6.0.1 \
+                xenon>=0.9.1 \
+                pre-commit>=3.6.0 \
+                detect-secrets>=1.4.0 \
+                pytest>=7.4.0 \
+                pytest-cov>=4.1.0 \
+                yamllint>=1.33.0
+        fi
         log_success "Core linting tools installed"
     fi
     
     # Install production dependencies if available
     if [[ -f "requirements.txt" ]]; then
-        python3 -m pip install -r requirements.txt
+        if [[ "$UV_AVAILABLE" == "true" ]]; then
+            uv pip install -r requirements.txt
+        else
+            python3 -m pip install -r requirements.txt
+        fi
         log_success "Production dependencies installed"
     fi
 }
@@ -117,7 +193,11 @@ setup_precommit() {
         log_success "Pre-commit hooks installed and updated"
     else
         log_error "pre-commit not found. Installing..."
-        python3 -m pip install pre-commit
+        if [[ "$UV_AVAILABLE" == "true" ]]; then
+            uv pip install pre-commit
+        else
+            python3 -m pip install pre-commit
+        fi
         pre-commit install
         log_success "Pre-commit installed and configured"
     fi
@@ -261,6 +341,18 @@ EOF
 show_usage() {
     log_info "Linting setup complete! Here are some useful commands:"
     echo ""
+    
+    # Show uv-specific commands if available
+    if command -v uv &> /dev/null; then
+        echo "Package management with uv:"
+        echo "  uv add <package>    # Add a new dependency"
+        echo "  uv sync             # Sync dependencies from lock file"
+        echo "  uv run <command>    # Run command in virtual environment"
+        echo "  uv pip install -r requirements.txt  # Install from requirements"
+        echo ""
+    fi
+    
+    echo "Linting commands:"
     echo "  make lint           # Run all linting checks"
     echo "  make lint-fix       # Run linting with auto-fix"
     echo "  make type-check     # Run type checking"
@@ -277,6 +369,15 @@ show_usage() {
     echo "  mypy.ini            # Type checking"
     echo "  .bandit             # Security scanning"
     echo ""
+    
+    # Show virtual environment info
+    if [[ -d ".venv" ]]; then
+        echo "Virtual environment:"
+        echo "  .venv/              # Virtual environment (created with uv)"
+        echo "  Activate with: source .venv/bin/activate"
+        echo ""
+    fi
+    
     echo "Reports will be saved in the 'reports/' directory."
 }
 

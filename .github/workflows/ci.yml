@@ -8,7 +8,7 @@ on:
 
 env:
   PYTHON_VERSION: "3.12"
-  POETRY_VERSION: "1.8.3"
+  UV_CACHE_DIR: ~/.cache/uv
 
 jobs:
   lint:
@@ -26,13 +26,16 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/uv.lock"
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-dev.txt
-        pip install -r requirements.txt
+        uv sync --all-extras --dev
 
     - name: Cache pre-commit hooks
       uses: actions/cache@v4
@@ -42,20 +45,20 @@ jobs:
 
     - name: Run Ruff (linting)
       run: |
-        ruff check . --format=github
-        ruff format --check .
+        uv run ruff check . --format=github
+        uv run ruff format --check .
 
     - name: Run Black (formatting check)
-      run: black --check --diff .
+      run: uv run black --check --diff .
 
     - name: Run isort (import sorting)
-      run: isort --check-only --diff .
+      run: uv run isort --check-only --diff .
 
     - name: Run MyPy (type checking)
-      run: mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
+      run: uv run mypy src/ auth/ security/ monitoring/ --ignore-missing-imports
 
     - name: Run Bandit (security)
-      run: bandit -r . -f json -o bandit-report.json || true
+      run: uv run bandit -r . -f json -o bandit-report.json || true
 
     - name: Upload Bandit results
       uses: actions/upload-artifact@v4
@@ -65,7 +68,7 @@ jobs:
         path: bandit-report.json
 
     - name: Run Safety (dependency check)
-      run: safety check --json --output safety-report.json || true
+      run: uv run safety check --json --output safety-report.json || true
 
     - name: Upload Safety results
       uses: actions/upload-artifact@v4
@@ -75,12 +78,12 @@ jobs:
         path: safety-report.json
 
     - name: Run Vulture (dead code detection)
-      run: vulture src/ auth/ security/ monitoring/ --min-confidence 80
+      run: uv run vulture src/ auth/ security/ monitoring/ --min-confidence 80
 
     - name: Run complexity checks
       run: |
-        radon cc src/ auth/ security/ monitoring/ -a
-        xenon --max-absolute B --max-modules B --max-average A src/ auth/ security/ monitoring/
+        uv run radon cc src/ auth/ security/ monitoring/ -a
+        uv run xenon --max-absolute B --max-modules B --max-average A src/ auth/ security/ monitoring/
 
   test:
     name: Tests
@@ -122,13 +125,16 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/uv.lock"
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-dev.txt
-        pip install -r requirements.txt
+        uv sync --all-extras --dev
 
     - name: Set up test database
       run: |
@@ -143,7 +149,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        pytest tests/ -v \
+        uv run pytest tests/ -v \
           --cov=src --cov=auth --cov=security --cov=monitoring \
           --cov-report=xml --cov-report=html --cov-report=term \
           --cov-fail-under=80 \
@@ -181,12 +187,16 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/uv.lock"
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-dev.txt
+        uv sync --all-extras --dev
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v3
@@ -198,7 +208,7 @@ jobs:
 
     - name: Run Bandit security scan
       run: |
-        bandit -r . -f sarif -o bandit.sarif || true
+        uv run bandit -r . -f sarif -o bandit.sarif || true
 
     - name: Upload Bandit SARIF
       uses: github/codeql-action/upload-sarif@v3
@@ -289,17 +299,20 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/uv.lock"
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-dev.txt
-        pip install -r requirements.txt
+        uv sync --all-extras --dev
 
     - name: Run performance benchmarks
       run: |
-        python -m pytest tests/benchmarks/ -v --benchmark-json=benchmark.json
+        uv run pytest tests/benchmarks/ -v --benchmark-json=benchmark.json
 
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
@@ -320,16 +333,20 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/uv.lock"
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-dev.txt
+        uv sync --all-extras --dev
 
     - name: Generate documentation
       run: |
-        sphinx-build -b html docs/ docs/_build/html
+        uv run sphinx-build -b html docs/ docs/_build/html
 
     - name: Upload documentation
       uses: actions/upload-artifact@v4
