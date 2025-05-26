@@ -390,7 +390,6 @@ max_average = "A"
 # UV Configuration
 [tool.uv]
 # Python 3.13 optimizations and latest uv features
-default-groups = ["dev", "test"]
 dev-dependencies = [
     # Core linting and formatting
     "ruff>=0.1.9",
