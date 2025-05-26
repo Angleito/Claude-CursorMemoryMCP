@@ -1,13 +1,16 @@
 # Multi-stage Ubuntu-optimized Mem0 AI MCP Server Dockerfile
 # Stage 1: Build dependencies
-FROM ubuntu:22.04 as builder
+FROM ubuntu:24.04 as builder
 
 # Set environment variables for build
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PYTHONOPTIMIZE=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    # Python 3.13 JIT optimizations
+    PYTHON_JIT=1
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
@@ -48,19 +51,17 @@ ENV PATH="/root/.cargo/bin:$PATH"
 WORKDIR /app
 
 # Copy dependency files first for better caching
-COPY pyproject.toml uv.lock* requirements*.txt ./
+COPY pyproject.toml uv.lock ./
 
 # Create virtual environment and install dependencies
 RUN uv venv .venv --python 3.13
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Install Python dependencies with optimizations
-RUN uv pip install --no-cache-dir -r requirements.txt \
-    && if [ -f requirements-dev.txt ]; then uv pip install --no-cache-dir -r requirements-dev.txt; fi \
-    && python -m pip install --upgrade pip setuptools wheel
+# Install Python dependencies with modern uv approach
+RUN uv sync --frozen --no-cache
 
 # Stage 2: Production runtime
-FROM ubuntu:22.04 as runtime
+FROM ubuntu:24.04 as runtime
 
 # Set environment variables for runtime
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -73,7 +74,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MALLOC_MMAP_THRESHOLD_=1024 \
     MALLOC_TRIM_THRESHOLD_=1024 \
     MALLOC_TOP_PAD_=1024 \
-    MALLOC_MMAP_MAX_=65536
+    MALLOC_MMAP_MAX_=65536 \
+    # Python 3.13 JIT optimizations
+    PYTHON_JIT=1
 
 # Install only runtime dependencies
 RUN apt-get update && apt-get install -y \

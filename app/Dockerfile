@@ -1,5 +1,5 @@
 # Multi-stage build for Ubuntu production deployment
-FROM ubuntu:22.04 as builder
+FROM ubuntu:24.04 as builder
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,7 +11,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MALLOC_MMAP_THRESHOLD_=1024 \
     MALLOC_TRIM_THRESHOLD_=1024 \
     MALLOC_TOP_PAD_=1024 \
-    MALLOC_MMAP_MAX_=65536
+    MALLOC_MMAP_MAX_=65536 \
+    # Python 3.13 JIT optimizations
+    PYTHON_JIT=1
 
 # Install build dependencies and Python
 RUN apt-get update && apt-get install -y \
@@ -30,14 +32,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Install uv
-RUN pip3 install uv
+# Install uv using official installer
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.cargo/bin:$PATH"
 
 # Set working directory
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml uv.lock ./
 
 # Create virtual environment and install dependencies
 ENV UV_COMPILE_BYTECODE=1 \
@@ -46,7 +49,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN uv sync --frozen --no-cache --no-dev
 
 # Production stage
-FROM ubuntu:22.04 as runtime
+FROM ubuntu:24.04 as runtime
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -59,7 +62,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MALLOC_TRIM_THRESHOLD_=1024 \
     MALLOC_TOP_PAD_=1024 \
     MALLOC_MMAP_MAX_=65536 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    # Python 3.13 JIT optimizations
+    PYTHON_JIT=1
 
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y \
