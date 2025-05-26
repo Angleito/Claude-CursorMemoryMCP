@@ -46,8 +46,8 @@ check_python_version() {
     local minor_version
     minor_version=$(echo "$python_version" | cut -d'.' -f2)
     
-    if [[ $major_version -lt 3 ]] || [[ $major_version -eq 3 && $minor_version -lt 8 ]]; then
-        log_error "Python 3.8+ required. Found: $python_version"
+    if [[ $major_version -lt 3 ]] || [[ $major_version -eq 3 && $minor_version -lt 11 ]]; then
+        log_error "Python 3.11+ required. Found: $python_version"
         exit 1
     fi
     log_success "Python version check passed: $python_version"

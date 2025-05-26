@@ -17,9 +17,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     libc6-dev \
     # Python and development headers
-    python3.12 \
-    python3.12-dev \
-    python3.12-venv \
+    python3.13 \
+    python3.13-dev \
+    python3.13-venv \
     python3-pip \
     # Network tools
     curl \
@@ -51,7 +51,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* requirements*.txt ./
 
 # Create virtual environment and install dependencies
-RUN uv venv .venv --python 3.12
+RUN uv venv .venv --python 3.13
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Install Python dependencies with optimizations
@@ -78,8 +78,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Install only runtime dependencies
 RUN apt-get update && apt-get install -y \
     # Minimal Python runtime
-    python3.12 \
-    python3.12-venv \
+    python3.13 \
+    python3.13-venv \
     # Essential libraries
     libpq5 \
     libopenblas0 \

@@ -8,13 +8,13 @@ Successfully migrated all GitHub Actions workflows from pip to uv, a fast Python
 ### 1. `.github/workflows/ci.yml`
 - **Main CI/CD Pipeline**: Updated all Python setup and dependency installation steps
 - **Jobs Updated**: lint, test, security, performance, docs
-- **Python Matrix**: Support for Python 3.8-3.12
+- **Python Matrix**: Support for Python 3.11-3.13
 - **Services**: PostgreSQL and Redis integration maintained
 
 ### 2. `.github/workflows/lint.yml` 
 - **Linting Pipeline**: Updated all code quality and analysis steps
 - **Jobs Updated**: lint, security, code-quality, docker-lint, shell-lint, yaml-lint, sql-lint, pre-commit
-- **Python Matrix**: Support for Python 3.10-3.12
+- **Python Matrix**: Support for Python 3.11-3.13
 
 ### 3. `requirements-dev.txt`
 - **Fixed pdb++ dependency**: Changed `pdb++>=0.10.3` to `pdbpp>=0.10.3` (package was renamed)

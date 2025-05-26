@@ -48,13 +48,13 @@ class Mem0Setup:
         print("📋 Checking Python version...")
 
         version = sys.version_info
-        if version.major < 3 or (version.major == 3 and version.minor < 8):
-            raise RuntimeError("Python 3.8+ is required. Python 3.12+ is strongly recommended for optimal performance and all features.")
+        if version.major < 3 or (version.major == 3 and version.minor < 11):
+            raise RuntimeError("Python 3.11+ is required. Python 3.13.3+ is strongly recommended for optimal performance and all features.")
 
         print(f"✓ Python {version.major}.{version.minor}.{version.micro}")
         
-        if version.major == 3 and version.minor < 12:
-            print(f"⚠️  Consider upgrading to Python 3.12+ for better performance and latest features")
+        if version.major == 3 and version.minor < 13:
+            print(f"⚠️  Consider upgrading to Python 3.13.3+ for better performance and latest features")
 
     def install_uv(self):
         """Install uv if not already available."""

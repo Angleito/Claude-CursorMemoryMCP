@@ -15,9 +15,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install build dependencies and Python
 RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-dev \
-    python3.12-venv \
+    python3.13 \
+    python3.13-dev \
+    python3.13-venv \
     python3-pip \
     build-essential \
     gcc \
@@ -63,8 +63,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install minimal runtime dependencies
 RUN apt-get update && apt-get install -y \
-    python3.12 \
-    python3.12-venv \
+    python3.13 \
+    python3.13-venv \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

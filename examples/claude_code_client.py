@@ -9,7 +9,7 @@ Usage:
     python claude_code_client.py
 
 Requirements:
-    - Python 3.8+
+    - Python 3.11+
     - Mem0 AI MCP Server running locally
 """
 

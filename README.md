@@ -4,7 +4,7 @@
 [![Code Quality](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/lint.yml/badge.svg)](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/lint.yml)
 [![Security](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/security.yml/badge.svg)](https://github.com/Angleito/Claude-CursorMemoryMCP/actions/workflows/security.yml)
 [![Coverage](https://codecov.io/gh/Angleito/Claude-CursorMemoryMCP/branch/main/graph/badge.svg)](https://codecov.io/gh/Angleito/Claude-CursorMemoryMCP)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Linting: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -42,7 +42,7 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
 
 ### Prerequisites
 
-- Python 3.9+ (recommended: 3.12+)
+- Python 3.11+ (recommended: 3.13.3+)
 - [uv](https://docs.astral.sh/uv/) package manager (recommended)
 - PostgreSQL 13+ with pgvector extension
 - Docker & Docker Compose (recommended)
@@ -378,7 +378,7 @@ make setup-dev
 
 The project includes a comprehensive GitHub Actions workflow (`.github/workflows/lint.yml`) that runs:
 
-- Multi-version Python linting (3.12+ recommended, tested on 3.8-3.12)
+- Multi-version Python linting (3.13+ recommended, tested on 3.11-3.13)
 - Security scanning with Bandit, Safety, and Semgrep
 - Code quality analysis with Vulture, Radon, and Xenon
 - Docker, Shell, YAML, and SQL linting

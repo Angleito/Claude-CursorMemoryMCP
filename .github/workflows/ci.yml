@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.13"
   UV_CACHE_DIR: ~/.cache/uv
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
     - name: Checkout code
@@ -30,6 +30,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
+        version: "latest"
         enable-cache: true
         cache-dependency-glob: "**/uv.lock"
 
@@ -90,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     services:
       postgres:
@@ -129,6 +130,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
+        version: "latest"
         enable-cache: true
         cache-dependency-glob: "**/uv.lock"
 
@@ -191,6 +193,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
+        version: "latest"
         enable-cache: true
         cache-dependency-glob: "**/uv.lock"
 
@@ -303,6 +306,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
+        version: "latest"
         enable-cache: true
         cache-dependency-glob: "**/uv.lock"
 
@@ -337,6 +341,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v4
       with:
+        version: "latest"
         enable-cache: true
         cache-dependency-glob: "**/uv.lock"
 
