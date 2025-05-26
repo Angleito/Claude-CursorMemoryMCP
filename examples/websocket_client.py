@@ -6,7 +6,7 @@ This example shows advanced WebSocket handling, connection management, and
 multi-client synchronization patterns.
 
 Requirements:
-    pip install websockets
+    uv add websockets
 
 Usage:
     python websocket_client.py
@@ -34,7 +34,7 @@ try:
     import websockets
     from websockets.exceptions import ConnectionClosed, WebSocketException
 except ImportError:
-    print("Error: websockets is required. Install with: pip install websockets")
+    print("Error: websockets is required. Install with: uv add websockets")
     sys.exit(1)
 
 

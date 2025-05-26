@@ -65,12 +65,22 @@ class Mem0Setup:
             raise FileNotFoundError("requirements.txt not found")
 
         try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+            # Try uv first, fall back to pip if uv is not available
+            try:
+                subprocess.run(
+                    ["uv", "pip", "install", "-r", str(requirements_file)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except FileNotFoundError:
+                # Fallback to pip if uv is not available
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "install", "-r", str(requirements_file)],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
             print("✓ Dependencies installed")
         except subprocess.CalledProcessError as e:
             print(f"Failed to install dependencies: {e.stderr}")

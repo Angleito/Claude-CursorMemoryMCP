@@ -6,7 +6,7 @@ This example shows HTTP API integration, WebSocket real-time updates,
 and IDE-specific features like code analysis and context management.
 
 Requirements:
-    pip install aiohttp websockets
+    uv add aiohttp websockets
 
 Usage:
     python cursor_client.py
@@ -31,13 +31,13 @@ from urllib.parse import urlparse
 try:
     import aiohttp
 except ImportError:
-    print("Error: aiohttp is required. Install with: pip install aiohttp")
+    print("Error: aiohttp is required. Install with: uv add aiohttp")
     sys.exit(1)
 
 try:
     import websockets
 except ImportError:
-    print("Error: websockets is required. Install with: pip install websockets")
+    print("Error: websockets is required. Install with: uv add websockets")
     sys.exit(1)
 
 

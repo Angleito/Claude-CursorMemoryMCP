@@ -1,11 +1,12 @@
 # Multi-stage build for production
-FROM python:3.12-slim as base
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim as base
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app/.venv
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -20,11 +21,14 @@ RUN groupadd -r mem0ai && useradd -r -g mem0ai -d /app -s /bin/bash mem0ai
 # Set working directory
 WORKDIR /app
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# Copy dependency files first for better caching
+COPY pyproject.toml uv.lock* ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies using uv
+RUN uv sync --frozen --no-cache --no-dev
+
+# Ensure the virtual environment is in PATH
+ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
 COPY . .

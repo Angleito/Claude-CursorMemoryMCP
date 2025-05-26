@@ -10,11 +10,11 @@
 [![Security: bandit](https://img.shields.io/badge/security-bandit-yellow.svg)](https://github.com/PyCQA/bandit)
 [![Pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
 
-An intelligent memory persistence layer that integrates with Claude Code and Cursor via the Model Context Protocol (MCP), providing long-term conversational memory and context across sessions.
+An intelligent memory persistence layer that integrates with Claude Desktop and Claude Code via the Model Context Protocol (MCP), providing long-term conversational memory and context across sessions.
 
 ## 🎯 Overview
 
-The Claude-Cursor Memory MCP Server is a specialized memory system designed to enhance AI coding assistants by providing persistent memory capabilities. Built on PostgreSQL with pgvector, it allows Claude Code and Cursor to remember conversations, code patterns, user preferences, and project context across sessions.
+The Claude-Cursor Memory MCP Server is a specialized memory system designed to enhance AI coding assistants by providing persistent memory capabilities. Built on PostgreSQL with pgvector, it allows Claude Desktop and Claude Code to remember conversations, code patterns, user preferences, and project context across sessions.
 
 ### 🚀 What is MCP?
 
@@ -27,9 +27,9 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
 
 ### ⚡ Key Features
 
-- **MCP Integration**: Native support for Claude Code and Cursor
+- **MCP Integration**: Native support for Claude Desktop and Claude Code
 - **Intelligent Memory**: Vector-based similarity search for relevant context retrieval
-- **Session Persistence**: Maintains conversation history across IDE restarts
+- **Session Persistence**: Maintains conversation history across AI sessions
 - **Code Pattern Learning**: Remembers your coding style and preferences
 - **Project Memory**: Context-aware memory per project/workspace
 - **Privacy-First**: Local deployment with GDPR compliance
@@ -42,8 +42,10 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
 ### Prerequisites
 
 - Python 3.12+ (recommended, minimum 3.8)
+- [uv](https://docs.astral.sh/uv/) package manager (recommended)
 - PostgreSQL 13+ with pgvector extension
 - Docker & Docker Compose (recommended)
+- Claude Desktop or Claude Code for MCP integration
 
 ### Quick Start
 
@@ -51,6 +53,14 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
    ```bash
    git clone https://github.com/Angleito/Claude-CursorMemoryMCP.git
    cd Claude-CursorMemoryMCP
+   
+   # Install using uv (recommended)
+   uv venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   uv add "mcp[cli]"
+   uv sync
+   
+   # Or use setup script
    python scripts/setup.py
    ```
 
@@ -61,9 +71,21 @@ The Model Context Protocol (MCP) is Anthropic's standardized way for AI assistan
    nano .env
    ```
 
-3. **Start the MCP Server**
+3. **Test the MCP Server**
    ```bash
-   python main.py
+   # Development mode with MCP Inspector
+   mcp dev main.py
+   
+   # Or run directly
+   uv run main.py
+   ```
+
+4. **Install in Claude Desktop/Claude Code**
+   ```bash
+   # Quick install for Claude Desktop
+   mcp install main.py --name "Memory Server"
+   
+   # Or configure manually (see MCP Configuration section)
    ```
 
 ### Docker Deployment
@@ -78,36 +100,68 @@ docker-compose logs -f
 
 ## 🔧 MCP Configuration
 
-### Claude Code Integration
+### Claude Desktop Integration
 
-Add to your `~/.claude/mcp_servers.json`:
+Add to your Claude Desktop configuration at `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
   "mcpServers": {
     "memory": {
-      "command": "python",
-      "args": ["/path/to/Claude-CursorMemoryMCP/main.py"],
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
+        "run",
+        "main.py"
+      ],
       "env": {
-        "PYTHONPATH": "/path/to/Claude-CursorMemoryMCP"
+        "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
+        "MEMORY_REDIS_URL": "redis://localhost:6379"
       }
     }
   }
 }
 ```
 
-### Cursor Integration
+### Claude Code Integration
 
-Add to your Cursor settings:
+For Claude Code, add to your configuration file:
 
 ```json
 {
-  "mcp.servers": {
+  "mcpServers": {
+    "memory": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
+        "run",
+        "main.py"
+      ],
+      "env": {
+        "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
+        "MEMORY_REDIS_URL": "redis://localhost:6379"
+      }
+    }
+  }
+}
+```
+
+### Alternative Python Installation
+
+If you prefer using Python directly:
+
+```json
+{
+  "mcpServers": {
     "memory": {
       "command": "python",
-      "args": ["/path/to/Claude-CursorMemoryMCP/main.py"],
+      "args": ["/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP/main.py"],
       "env": {
-        "MEMORY_SERVER_URL": "http://localhost:8000"
+        "PYTHONPATH": "/ABSOLUTE/PATH/TO/Claude-CursorMemoryMCP",
+        "MEMORY_DATABASE_URL": "postgresql://localhost/memory",
+        "MEMORY_REDIS_URL": "redis://localhost:6379"
       }
     }
   }
@@ -241,7 +295,7 @@ memory_storage_bytes
 ### Storing Code Patterns
 
 ```python
-# Via MCP in Claude Code
+# Via MCP in Claude Desktop/Claude Code
 await store_memory(
     content="Always use TypeScript strict mode for new projects",
     context={"project": "web-app", "language": "typescript"},
