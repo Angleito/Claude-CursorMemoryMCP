@@ -1,0 +1,150 @@
+# Prometheus alerting rules for Mem0AI
+groups:
+  - name: mem0ai.rules
+    rules:
+      # Application health alerts
+      - alert: Mem0AIDown
+        expr: up{job="mem0ai"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mem0AI application is down"
+          description: "Mem0AI application has been down for more than 1 minute."
+
+      - alert: Mem0AIHighResponseTime
+        expr: histogram_quantile(0.95, rate(mem0_request_duration_seconds_bucket{job="mem0ai"}[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time for Mem0AI"
+          description: "95th percentile response time is {{ $value }}s for more than 2 minutes."
+
+      - alert: Mem0AIHighErrorRate
+        expr: rate(mem0_requests_total{job="mem0ai",status=~"5.."}[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate for Mem0AI"
+          description: "Error rate is {{ $value }} errors per second."
+
+      # System resource alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80% for more than 2 minutes."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 85% for more than 2 minutes."
+
+      - alert: LowDiskSpace
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 85
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space"
+          description: "Disk usage is above 85% on {{ $labels.device }}."
+
+      # Database alerts
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Qdrant vector database is down"
+          description: "Qdrant has been down for more than 1 minute."
+
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL has been down for more than 1 minute."
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis has been down for more than 1 minute."
+
+      # SSL certificate alerts
+      - alert: SSLCertExpiringSoon
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value }} days."
+
+      - alert: SSLCertExpired
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SSL certificate has expired"
+          description: "SSL certificate for {{ $labels.instance }} has expired."
+
+  - name: backup.rules
+    rules:
+      # Backup monitoring
+      - alert: BackupFailed
+        expr: time() - backup_last_success_timestamp_seconds > 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backup has not run successfully"
+          description: "Backup has not completed successfully for more than 24 hours."
+          
+  - name: mem0ai.application.rules
+    rules:
+      # Memory search performance
+      - alert: SlowMemorySearch
+        expr: histogram_quantile(0.95, rate(mem0_search_duration_seconds_bucket[5m])) > 2
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Memory search is slow"
+          description: "95th percentile search duration is {{ $value }}s"
+          
+      # Embedding generation performance  
+      - alert: SlowEmbeddingGeneration
+        expr: histogram_quantile(0.95, rate(mem0_embedding_generation_duration_seconds_bucket[5m])) > 5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding generation is slow"
+          description: "95th percentile embedding generation duration is {{ $value }}s"
+          
+      # High error count
+      - alert: HighErrorCount
+        expr: increase(mem0_errors_total[5m]) > 10
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High number of errors"
+          description: "{{ $value }} errors in the last 5 minutes"

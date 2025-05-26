@@ -1,0 +1,266 @@
+# Prometheus Alert Rules for Memory Vector Database
+groups:
+  - name: memdb_application
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(api_requests_total{status_code=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: memdb
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for the last 5 minutes"
+
+      # High response time
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: memdb
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s"
+
+      # Memory usage too high
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # Disk space low
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+        for: 2m
+        labels:
+          severity: critical
+          service: system
+        annotations:
+          summary: "Low disk space"
+          description: "Disk space is {{ $value | humanizePercentage }} available"
+
+      # Service down
+      - alert: ServiceDown
+        expr: up{job="memdb-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: memdb
+        annotations:
+          summary: "MemDB service is down"
+          description: "MemDB application is not responding"
+
+  - name: memdb_security
+    rules:
+      # High number of failed logins
+      - alert: BruteForceAttack
+        expr: rate(failed_logins_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "Potential brute force attack"
+          description: "{{ $value }} failed login attempts per second"
+
+      # High rate of security events
+      - alert: HighSecurityEvents
+        expr: rate(security_events_total{severity="high"}[5m]) > 1
+        for: 1m
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "High rate of security events"
+          description: "{{ $value }} high-severity security events per second"
+
+      # Critical security events
+      - alert: CriticalSecurityEvent
+        expr: rate(security_events_total{severity="critical"}[1m]) > 0
+        for: 0s
+        labels:
+          severity: critical
+          service: security
+        annotations:
+          summary: "Critical security event detected"
+          description: "Critical security event occurred"
+
+      # Rate limiting triggered frequently
+      - alert: FrequentRateLimiting
+        expr: rate(api_requests_total{status_code="429"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: security
+        annotations:
+          summary: "Frequent rate limiting"
+          description: "{{ $value }} rate limit hits per second"
+
+  - name: memdb_database
+    rules:
+      # PostgreSQL down
+      - alert: PostgreSQLDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database is not responding"
+
+      # High database connections
+      - alert: HighDatabaseConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "High database connections"
+          description: "Database connections at {{ $value | humanizePercentage }}"
+
+      # Long running queries
+      - alert: LongRunningQueries
+        expr: pg_stat_activity_max_tx_duration{state="active"} > 300
+        for: 5m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Long running database queries"
+          description: "Query running for {{ $value }}s"
+
+      # Redis down
+      - alert: RedisDown
+        expr: up{job="redis-exporter"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: cache
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache is not responding"
+
+      # High Redis memory usage
+      - alert: HighRedisMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: cache
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage at {{ $value | humanizePercentage }}"
+
+  - name: memdb_ssl_certificates
+    rules:
+      # SSL certificate expiring soon
+      - alert: SSLCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7  # 7 days
+        for: 1h
+        labels:
+          severity: warning
+          service: ssl
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate expires in {{ $value | humanizeDuration }}"
+
+      # SSL certificate expired
+      - alert: SSLCertificateExpired
+        expr: probe_ssl_earliest_cert_expiry - time() <= 0
+        for: 0s
+        labels:
+          severity: critical
+          service: ssl
+        annotations:
+          summary: "SSL certificate expired"
+          description: "SSL certificate has expired"
+
+  - name: memdb_performance
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+      # High load average
+      - alert: HighLoadAverage
+        expr: node_load15 > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High load average"
+          description: "Load average is {{ $value }}"
+
+      # Low request rate (service potentially down)
+      - alert: LowRequestRate
+        expr: rate(api_requests_total[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: memdb
+        annotations:
+          summary: "Low request rate"
+          description: "Request rate is {{ $value }} requests per second"
+
+      # Vector database operations slow
+      - alert: SlowVectorOperations
+        expr: histogram_quantile(0.95, rate(vector_operation_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: memdb
+        annotations:
+          summary: "Slow vector operations"
+          description: "95th percentile vector operation time is {{ $value }}s"
+
+  - name: memdb_data_quality
+    rules:
+      # Large number of database errors
+      - alert: DatabaseErrors
+        expr: rate(database_operations_total{status="error"}[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: warning
+          service: database
+        annotations:
+          summary: "Database errors detected"
+          description: "{{ $value }} database errors per second"
+
+      # Data inconsistency detected
+      - alert: DataInconsistency
+        expr: data_consistency_check_failures_total > 0
+        for: 0s
+        labels:
+          severity: critical
+          service: data
+        annotations:
+          summary: "Data inconsistency detected"
+          description: "Data consistency check failed"
+
+      # Backup failures
+      - alert: BackupFailure
+        expr: time() - backup_last_success_timestamp > 86400  # 24 hours
+        for: 1h
+        labels:
+          severity: critical
+          service: backup
+        annotations:
+          summary: "Backup failure"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago"

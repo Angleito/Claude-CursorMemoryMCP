@@ -1,0 +1,44 @@
+# Systemd timer for Mem0AI backup
+# Place this file in /etc/systemd/system/mem0ai-backup.timer
+# Enhanced with better scheduling and monitoring
+
+[Unit]
+Description=Run Mem0AI backup service
+Documentation=man:systemd.timer(5)
+Requires=mem0ai-backup.service
+After=multi-user.target
+PartOf=mem0ai-backup.service
+
+[Timer]
+# Run daily at 2:00 AM
+OnCalendar=*-*-* 02:00:00
+
+# Add randomized delay up to 30 minutes to avoid system load spikes
+RandomizedDelaySec=1800
+
+# Run missed backups at startup if system was down
+Persistent=true
+
+# Additional reliability settings
+# Don't run if system is on battery (laptop/UPS)
+# ConditionACPower=true
+
+# Accuracy - allow up to 1 hour variance for power management
+AccuracySec=1h
+
+# Wake system from suspend for backup
+WakeSystem=false
+
+# Only run if the main service is not already running
+# This prevents overlapping backup operations
+Unit=mem0ai-backup.service
+
+[Install]
+WantedBy=timers.target
+
+# Additional timer for weekly full backups
+# Uncomment to enable weekly full backups on Sundays at 3:00 AM
+# [Timer]
+# OnCalendar=Sun *-*-* 03:00:00
+# RandomizedDelaySec=1800
+# Persistent=true

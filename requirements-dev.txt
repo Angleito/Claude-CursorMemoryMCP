@@ -1,0 +1,99 @@
+# Development and linting dependencies for mem0ai
+
+# Core linting and formatting
+ruff>=0.1.9              # Fast Python linter and formatter
+black>=23.12.0           # Code formatter
+isort>=5.13.0            # Import sorter
+mypy>=1.8.0              # Static type checker
+
+# Security scanning
+bandit[toml]>=1.7.5      # Security linter
+safety>=2.3.0            # Dependency vulnerability scanner
+semgrep>=1.45.0          # Static analysis security scanner
+
+# Code quality tools
+vulture>=2.10            # Dead code finder
+radon>=6.0.1             # Complexity analyzer
+xenon>=0.9.1             # Complexity monitoring
+mccabe>=0.7.0            # Complexity checker
+
+# Pre-commit and hooks
+pre-commit>=3.6.0        # Git hook management
+detect-secrets>=1.4.0    # Secret detection
+
+# Testing framework
+pytest>=7.4.0           # Testing framework
+pytest-asyncio>=0.21.0  # Async testing support
+pytest-cov>=4.1.0       # Coverage plugin
+pytest-mock>=3.12.0     # Mocking support
+pytest-xdist>=3.5.0     # Parallel testing
+pytest-benchmark>=4.0.0 # Performance benchmarking
+coverage[toml]>=7.3.0    # Coverage measurement
+
+# Type checking support
+types-redis>=4.6.0       # Redis type stubs
+types-requests>=2.31.0   # Requests type stubs
+types-PyYAML>=6.0.0      # PyYAML type stubs
+
+# Documentation tools
+doc8>=1.1.1              # Documentation style checker
+sphinx>=7.1.0            # Documentation generator
+sphinx-rtd-theme>=1.3.0  # Read the Docs theme
+
+# Development utilities
+pip-tools>=7.3.0         # Dependency management
+tox>=4.11.0              # Testing across environments
+nox>=2023.4.22           # Task automation
+
+# Jupyter support (if needed)
+notebook>=7.0.0          # Jupyter notebook
+ipykernel>=6.25.0        # Jupyter kernel
+
+# Performance profiling
+py-spy>=0.3.14           # Sampling profiler
+memory-profiler>=0.61.0  # Memory usage profiler
+line-profiler>=4.1.1     # Line-by-line profiler
+
+# Database testing
+pytest-postgresql>=5.0.0 # PostgreSQL testing fixtures
+
+# HTTP testing
+httpx>=0.25.0            # HTTP client for testing
+respx>=0.20.0            # HTTP mocking
+
+# Environment management
+python-dotenv>=1.0.0     # Environment variable management
+
+# Build tools
+build>=1.0.0             # PEP 517 build frontend
+wheel>=0.42.0            # Wheel package format
+setuptools>=69.0.0       # Package building
+twine>=4.0.0             # Package uploading
+
+# Debugging tools
+pdb++>=0.10.3            # Enhanced debugger
+ipdb>=0.13.13            # IPython debugger
+
+# Code analysis
+flake8>=6.1.0            # Alternative linter (backup)
+pylint>=3.0.0            # Comprehensive linter (backup)
+
+# SQL tools
+sqlfluff>=3.0.0          # SQL linter and formatter
+
+# YAML/JSON tools
+yamllint>=1.33.0         # YAML linter
+jsonschema>=4.20.0       # JSON schema validation
+
+# Container tools
+hadolint-py>=2.12.0      # Dockerfile linter
+
+# Git tools
+gitpython>=3.1.40        # Git repository interaction
+
+# Monitoring and metrics (dev)
+prometheus-client>=0.19.0 # Metrics collection
+
+# Async development tools
+aiofiles>=23.2.1         # Async file operations
+aioresponses>=0.7.4      # Async HTTP mocking

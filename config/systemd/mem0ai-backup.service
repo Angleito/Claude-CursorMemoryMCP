@@ -1,0 +1,96 @@
+# Systemd service for Mem0AI backup
+# Place this file in /etc/systemd/system/mem0ai-backup.service
+# Enhanced with comprehensive security settings
+
+[Unit]
+Description=Mem0AI Backup Service
+Documentation=man:mem0ai-backup(8)
+After=mem0ai.service network-online.target
+Wants=network-online.target
+Requires=mem0ai.service
+OnFailure=mem0ai-backup-failure.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/mem0ai
+ExecStart=/opt/mem0ai/scripts/backup.sh
+ExecStartPre=/bin/bash -c 'test -x /opt/mem0ai/scripts/backup.sh'
+User=mem0ai
+Group=mem0ai
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mem0ai-backup
+SyslogLevel=info
+
+# Timeout settings
+TimeoutStartSec=3600
+TimeoutStopSec=60
+
+# Restart policy for failed backups
+Restart=no
+RestartSec=300
+
+# Environment
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/opt/mem0ai/.env
+
+# Resource limits
+MemoryMax=2G
+TasksMax=100
+IOSchedulingClass=2
+IOSchedulingPriority=7
+Nice=10
+
+# Security settings - Comprehensive hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=no
+PrivateUsers=no
+PrivateMounts=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectHostname=yes
+ProtectClock=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @cpu-emulation @obsolete @privileged @reboot @swap @raw-io
+SystemCallErrorNumber=EPERM
+
+# File system access
+ReadWritePaths=/opt/mem0ai
+ReadWritePaths=/tmp
+ReadOnlyPaths=/usr /lib /lib64 /etc/ssl /etc/ca-certificates
+InaccessiblePaths=/proc/sys /proc/sysrq-trigger /proc/latency_stats /proc/acpi /proc/timer_stats /proc/fs /sys/fs/cgroup
+
+# Capabilities
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Additional security
+UMask=0077
+KeyringMode=private
+
+# Additional failure handling service
+# Create mem0ai-backup-failure.service to handle backup failures
+# [Unit]
+# Description=Mem0AI Backup Failure Handler
+# 
+# [Service]
+# Type=oneshot
+# ExecStart=/opt/mem0ai/scripts/backup-failure-handler.sh
+# User=mem0ai
+# Group=mem0ai

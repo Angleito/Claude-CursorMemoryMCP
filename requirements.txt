@@ -1,0 +1,62 @@
+# Core dependencies for mem0ai pgvector optimization
+asyncpg>=0.28.0
+numpy>=1.24.0
+psutil>=5.9.0
+
+# Web framework and API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# Database and vector operations
+pgvector>=0.2.3
+supabase>=2.0.0
+
+# Machine learning and embeddings
+openai>=1.0.0
+cohere>=4.0.0
+transformers>=4.30.0
+sentence-transformers>=2.2.0
+torch>=2.0.0
+scikit-learn>=1.3.0
+faiss-cpu>=1.7.4
+
+# Text processing and similarity
+nltk>=3.8.0
+Levenshtein>=0.21.0
+jellyfish>=0.11.0
+
+# Compression and serialization
+blosc2>=2.2.0
+lz4>=4.3.0
+pickle5>=0.0.12
+
+# Async and concurrency
+aiohttp>=3.8.0
+redis>=4.5.0
+
+# Authentication and security
+passlib[bcrypt]>=1.7.4
+python-jose[cryptography]>=3.3.0
+cryptography>=41.0.0
+
+# Real-time features
+sse-starlette>=1.6.0
+
+# Logging and monitoring
+structlog>=23.2.0
+prometheus-client>=0.17.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+
+# Cloud storage (optional)
+boto3>=1.26.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0

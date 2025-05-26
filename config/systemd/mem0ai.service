@@ -1,0 +1,119 @@
+# Systemd service file for Mem0AI
+# Place this file in /etc/systemd/system/mem0ai.service
+# Enhanced with comprehensive security and monitoring
+
+[Unit]
+Description=Mem0AI Open Memory Vector Database Server
+Documentation=https://docs.mem0.ai
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+PartOf=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/mem0ai
+
+# Pre-start checks and cleanup
+ExecStartPre=/bin/bash -c 'test -f /opt/mem0ai/docker-compose.yml'
+ExecStartPre=/bin/bash -c 'test -f /opt/mem0ai/.env'
+ExecStartPre=-/usr/bin/docker-compose down --timeout 30
+
+# Main service commands
+ExecStart=/usr/bin/docker-compose up -d --remove-orphans
+ExecStop=/usr/bin/docker-compose down --timeout 60
+ExecReload=/usr/bin/docker-compose restart
+
+# Health check
+ExecStartPost=/bin/bash -c 'for i in {1..30}; do if curl -sf http://localhost/health >/dev/null 2>&1; then exit 0; fi; sleep 5; done; exit 1'
+
+# User and group
+User=mem0ai
+Group=mem0ai
+
+# Environment
+Environment=COMPOSE_HTTP_TIMEOUT=180
+Environment=DOCKER_CLIENT_TIMEOUT=180
+Environment=COMPOSE_PARALLEL_LIMIT=4
+EnvironmentFile=-/opt/mem0ai/.env
+
+# Timeouts
+TimeoutStartSec=600
+TimeoutStopSec=180
+TimeoutReloadSec=120
+
+# Restart configuration
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=0
+
+# Resource limits
+MemoryMax=4G
+TasksMax=200
+IOSchedulingClass=2
+IOSchedulingPriority=4
+
+# Security settings - Comprehensive hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=no
+PrivateUsers=no
+PrivateMounts=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectHostname=yes
+ProtectClock=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RemoveIPC=yes
+SystemCallFilter=@system-service
+SystemCallFilter=~@debug @mount @cpu-emulation @obsolete @privileged @reboot @swap
+SystemCallErrorNumber=EPERM
+
+# File system access
+ReadWritePaths=/opt/mem0ai
+ReadWritePaths=/tmp
+ReadWritePaths=/var/lib/docker/volumes
+ReadOnlyPaths=/usr /lib /lib64 /etc/ssl /etc/ca-certificates
+InaccessiblePaths=/proc/sys /proc/sysrq-trigger /proc/latency_stats /proc/acpi /proc/timer_stats
+
+# Capabilities - Docker requires some elevated privileges
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETGID CAP_SETUID
+AmbientCapabilities=
+
+# Additional security
+UMask=0027
+KeyringMode=private
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mem0ai
+SyslogLevel=info
+
+# Journal configuration
+StandardOutputAppend=false
+StandardErrorAppend=false
+
+# Kill configuration
+KillMode=mixed
+KillSignal=SIGTERM
+FinalKillSignal=SIGKILL
+TimeoutStopFailureMode=terminate
+
+[Install]
+WantedBy=multi-user.target
+Alias=memory-database.service

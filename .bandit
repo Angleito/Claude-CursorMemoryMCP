@@ -1,0 +1,54 @@
+[bandit]
+# Bandit configuration file
+exclude_dirs = [
+    "tests",
+    "venv",
+    "env",
+    ".venv",
+    ".env",
+    "logs",
+    "htmlcov",
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    "build",
+    "dist",
+    "*.egg-info"
+]
+
+# Skip certain test IDs that are too restrictive for this project
+skips = [
+    "B101",  # assert_used - allow assert in non-production code
+    "B601",  # paramiko_calls - we may use paramiko legitimately
+    "B602",  # subprocess_popen_with_shell_equals_true - allow when necessary
+    "B603",  # subprocess_without_shell_equals_true - allow subprocess usage
+    "B324",  # hashlib_new_insecure_functions - allow MD5/SHA1 for non-crypto uses
+]
+
+# Test files have different security requirements
+[bandit.assert_used]
+exclude = ["*test*.py", "test_*.py"]
+
+# Severity levels to report
+confidence = "medium"
+severity = "medium"
+
+# Formats available: csv, json, txt, xml, yaml
+format = "txt"
+
+# Output file (optional)
+# output = "bandit-report.txt"
+
+# Test IDs to include (if not specified, all tests are run)
+# tests = ["B201", "B301"]
+
+# Python files to analyze
+include = ["*.py"]
+
+# Exclude patterns
+exclude = [
+    "*/test_*.py",
+    "*/tests/*",
+    "*/*_test.py"
+]

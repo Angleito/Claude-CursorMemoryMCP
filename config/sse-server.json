@@ -1,0 +1,58 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "cors": {
+      "origins": ["https://localhost:3000", "https://your-domain.com"],
+      "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      "headers": ["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+      "credentials": true
+    },
+    "ssl": {
+      "enabled": false,
+      "cert_file": null,
+      "key_file": null
+    }
+  },
+  "sse": {
+    "endpoint": "/mcp/sse",
+    "keepalive_interval": 30,
+    "max_connections": 1000,
+    "connection_timeout": 300,
+    "ping_interval": 25,
+    "compression": true
+  },
+  "websocket": {
+    "endpoint": "/ws",
+    "max_connections": 500,
+    "ping_interval": 30,
+    "ping_timeout": 10,
+    "close_timeout": 10
+  },
+  "authentication": {
+    "required": true,
+    "jwt": {
+      "algorithm": "HS256",
+      "expire_minutes": 60,
+      "refresh_expire_days": 30
+    },
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 60,
+      "burst_size": 10
+    }
+  },
+  "memory": {
+    "cache_ttl": 3600,
+    "max_search_results": 100,
+    "embedding_cache_size": 10000,
+    "auto_cleanup": true,
+    "cleanup_interval": 86400
+  },
+  "monitoring": {
+    "metrics_enabled": true,
+    "health_check_interval": 30,
+    "performance_logging": true,
+    "error_tracking": true
+  }
+}
