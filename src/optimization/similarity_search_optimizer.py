@@ -144,13 +144,23 @@ class SearchCache:
         return f"search_cache:{hash_key}"
 
     async def get(self, query: SearchQuery) -> SearchResponse | None:
-        """Get cached search results."""
+        """Get cached search results with decompression support."""
         if not self.redis_client or not query.config.use_cache:
             return None
 
         try:
             key = self._get_cache_key(query)
-            cached_data = await self.redis_client.get(key)
+            # Try compressed version first
+            gz_key = f"gz:{key}"
+            cached_data = await self.redis_client.get(gz_key)
+            
+            if cached_data:
+                import gzip
+                cached_data = gzip.decompress(cached_data)
+            else:
+                # Fallback to uncompressed
+                cached_data = await self.redis_client.get(key)
+                
             if cached_data:
                 data = pickle.loads(cached_data)
                 # Convert back to SearchResponse
@@ -168,7 +178,7 @@ class SearchCache:
         return None
 
     async def set(self, query: SearchQuery, response: SearchResponse):
-        """Cache search results."""
+        """Cache search results with compression and tiered caching."""
         if not self.redis_client or not query.config.use_cache:
             return
 
@@ -189,10 +199,21 @@ class SearchCache:
                 result["created_at"] = result["created_at"].isoformat()
                 result["last_accessed"] = result["last_accessed"].isoformat()
 
+            # Use compression for large result sets
             cached_data = pickle.dumps(data)
-            await self.redis_client.setex(
-                key, query.config.cache_ttl_seconds, cached_data
-            )
+            if len(cached_data) > 10240:  # 10KB threshold
+                import gzip
+                cached_data = gzip.compress(cached_data)
+                key = f"gz:{key}"
+            
+            # Adjust TTL based on result quality and size
+            ttl = query.config.cache_ttl_seconds
+            if len(response.results) == 0:
+                ttl = min(ttl // 4, 300)  # Shorter TTL for empty results
+            elif response.search_time_ms > 1000:  # Expensive queries get longer cache
+                ttl = min(ttl * 2, 7200)  # Max 2 hours
+                
+            await self.redis_client.setex(key, ttl, cached_data)
 
         except Exception as e:
             logger.warning("Cache set error: %s", e)
@@ -215,21 +236,47 @@ class FAISSIndexManager:
     def create_index(
         self, user_id: str, algorithm: SearchAlgorithm, embeddings: np.ndarray
     ) -> None:
-        """Create FAISS index for user."""
+        """Create FAISS index for user with optimized parameters."""
         with self.lock:
+            n_vectors = len(embeddings)
+            
             if algorithm == SearchAlgorithm.FAISS_FLAT:
                 index = faiss.IndexFlatIP(self.dimensions)  # Inner product for cosine
             elif algorithm == SearchAlgorithm.FAISS_IVF:
-                # Choose number of clusters based on data size
-                nlist = min(100, max(10, len(embeddings) // 10))
+                # Optimized cluster selection based on dataset size
+                if n_vectors < 1000:
+                    nlist = max(4, n_vectors // 100)
+                elif n_vectors < 10000:
+                    nlist = max(10, n_vectors // 50)
+                else:
+                    nlist = min(4096, max(100, int(np.sqrt(n_vectors))))
+                    
                 quantizer = faiss.IndexFlatIP(self.dimensions)
                 index = faiss.IndexIVFFlat(quantizer, self.dimensions, nlist)
-                # Ensure embeddings are contiguous and float32
-                training_embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+                
+                # Use subset for training on large datasets
+                if n_vectors > 50000:
+                    train_size = min(100000, n_vectors // 2)
+                    train_indices = np.random.choice(n_vectors, train_size, replace=False)
+                    training_embeddings = embeddings[train_indices]
+                else:
+                    training_embeddings = embeddings
+                    
+                training_embeddings = np.ascontiguousarray(training_embeddings, dtype=np.float32)
+                faiss.normalize_L2(training_embeddings)
                 index.train(training_embeddings)
+                
             elif algorithm == SearchAlgorithm.FAISS_HNSW:
-                index = faiss.IndexHNSWFlat(self.dimensions, 32)
-                index.hnsw.efConstruction = 200
+                # Adaptive parameters based on dataset size
+                if n_vectors < 10000:
+                    m, ef_construction = 16, 200
+                elif n_vectors < 100000:
+                    m, ef_construction = 32, 400
+                else:
+                    m, ef_construction = 48, 500
+                    
+                index = faiss.IndexHNSWFlat(self.dimensions, m)
+                index.hnsw.efConstruction = ef_construction
             else:
                 raise ValueError(f"Unsupported FAISS algorithm: {algorithm}")
 
@@ -237,8 +284,14 @@ class FAISSIndexManager:
             normalized_embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
             faiss.normalize_L2(normalized_embeddings)
 
-            # Add vectors to index
-            index.add(normalized_embeddings)
+            # Add vectors to index in batches for large datasets
+            if n_vectors > 10000:
+                batch_size = 5000
+                for i in range(0, n_vectors, batch_size):
+                    batch = normalized_embeddings[i:i+batch_size]
+                    index.add(batch)
+            else:
+                index.add(normalized_embeddings)
 
             # Store index and mapping
             key = f"{user_id}_{algorithm.value}"
@@ -378,48 +431,56 @@ class SimilaritySearchOptimizer:
             )
 
     async def _exact_search(self, query: SearchQuery) -> list[SearchResult]:
-        """Perform exact search using database."""
-        conditions = ["m.user_id = $1"]
+        """Perform exact search using database with optimized query structure."""
+        conditions = ["m.user_id = $1", "m.embedding IS NOT NULL"]
         params = [query.user_id]
         param_count = 1
 
-        # Add filters
+        # Pre-filter optimization: add memory_type early if specified for better index usage
         if query.memory_types:
             param_count += 1
             conditions.append(f"m.memory_type = ANY(${param_count})")
             params.append(query.memory_types)
 
+        # Add importance filter early for selectivity
         if query.min_importance is not None:
             param_count += 1
             conditions.append(f"m.importance_score >= ${param_count}")
             params.append(query.min_importance)
 
+        # Date filters for temporal locality
         if query.max_age_hours is not None:
             param_count += 1
-            conditions.append(
-                f"m.created_at >= NOW() - INTERVAL '{query.max_age_hours} hours'"
-            )
+            conditions.append(f"m.created_at >= NOW() - INTERVAL '{query.max_age_hours} hours'")
 
+        # Exclude IDs filter
         if query.exclude_memory_ids:
             param_count += 1
             conditions.append(f"m.id != ALL(${param_count})")
             params.append(query.exclude_memory_ids)
 
-        # Metadata filters
+        # Metadata filters with optimized JSON access
         if query.metadata_filters:
             for key, value in query.metadata_filters.items():
                 param_count += 1
-                conditions.append(f"m.metadata->>'{key}' = ${param_count}")
-                params.append(str(value))
+                # Use JSONB containment for better performance on indexed metadata
+                conditions.append(f"m.metadata @> ${param_count}")
+                params.append(json.dumps({key: value}))
 
         where_clause = " AND ".join(conditions)
 
-        # Choose similarity operator based on metric
+        # Optimized similarity operators
         if query.config.similarity_metric == SimilarityMetric.COSINE:
             similarity_expr = f"1 - (m.embedding <=> ${param_count + 1})"
             order_expr = f"m.embedding <=> ${param_count + 1}"
+        elif query.config.similarity_metric == SimilarityMetric.DOT_PRODUCT:
+            similarity_expr = f"(m.embedding <#> ${param_count + 1})"
+            order_expr = f"m.embedding <#> ${param_count + 1} DESC"
+        elif query.config.similarity_metric == SimilarityMetric.EUCLIDEAN:
+            similarity_expr = f"1 / (1 + (m.embedding <-> ${param_count + 1}))"
+            order_expr = f"m.embedding <-> ${param_count + 1}"
         else:
-            # Fallback to cosine for now
+            # Default to cosine
             similarity_expr = f"1 - (m.embedding <=> ${param_count + 1})"
             order_expr = f"m.embedding <=> ${param_count + 1}"
 
@@ -429,6 +490,7 @@ class SimilaritySearchOptimizer:
         else:
             params.append(query.query_embedding)
 
+        # Optimized query with better ordering and limits
         sql = f"""
             SELECT
                 m.id,
@@ -471,7 +533,7 @@ class SimilaritySearchOptimizer:
             return results
 
     async def _faiss_search(self, query: SearchQuery) -> list[SearchResult]:
-        """Perform search using FAISS index."""
+        """Perform search using FAISS index with optimizations."""
         algorithm = query.config.algorithm
 
         # Build index if it doesn't exist
@@ -481,43 +543,47 @@ class SimilaritySearchOptimizer:
                 if isinstance(query.query_embedding, np.ndarray)
                 else np.array(query.query_embedding, dtype=np.float32)
             )
+            # Search for more candidates initially for better filtering
+            search_k = min(query.config.max_results * 2, 1000)
             similarities, indices = self.faiss_manager.search(
                 query.user_id,
                 algorithm,
                 query_embedding_array,
-                query.config.max_results,
+                search_k,
                 query.config.faiss_nprobe,
             )
         except ValueError:
             # Index doesn't exist, build it
             await self.build_user_index(query.user_id, algorithm)
+            search_k = min(query.config.max_results * 2, 1000)
             similarities, indices = self.faiss_manager.search(
                 query.user_id,
                 algorithm,
                 query_embedding_array,
-                query.config.max_results,
+                search_k,
                 query.config.faiss_nprobe,
             )
 
         # Get memory details from database
         memory_ids, _ = await self._load_user_embeddings(query.user_id)
 
-        # Filter results by similarity threshold
+        # Filter results by similarity threshold with improved filtering
         valid_results = []
         for sim, idx in zip(similarities, indices, strict=False):
-            if idx < len(memory_ids) and sim >= query.config.similarity_threshold:
+            if (idx != -1 and idx < len(memory_ids) and 
+                sim >= query.config.similarity_threshold):
                 valid_results.append((memory_ids[idx], float(sim)))
 
         if not valid_results:
             return []
 
-        # Get full memory details
+        # Get full memory details with optimized batch query
         memory_id_list = [r[0] for r in valid_results]
         similarity_map = {r[0]: r[1] for r in valid_results}
 
         async with self.db_pool.acquire() as conn:
-            placeholders = ",".join(f"${i+2}" for i in range(len(memory_id_list)))
-            sql = f"""
+            # Use ANY operator for better performance on large ID lists
+            sql = """
                 SELECT
                     m.id,
                     m.memory_text,
@@ -528,15 +594,26 @@ class SimilaritySearchOptimizer:
                     m.last_accessed,
                     m.access_count
                 FROM mem0_vectors.memories m
-                WHERE m.user_id = $1 AND m.id IN ({placeholders})
+                WHERE m.user_id = $1 AND m.id = ANY($2)
+                ORDER BY 
+                    CASE m.id
+                        WHEN ANY($2) THEN array_position($2, m.id)
+                        ELSE 999999
+                    END
             """
 
-            rows = await conn.fetch(sql, query.user_id, *memory_id_list)
+            rows = await conn.fetch(sql, query.user_id, memory_id_list)
 
             results = []
             for row in rows:
                 memory_id = str(row["id"])
                 similarity_score = similarity_map.get(memory_id, 0.0)
+
+                # Apply additional filters at the database level
+                if query.memory_types and row["memory_type"] not in query.memory_types:
+                    continue
+                if query.min_importance and row["importance_score"] < query.min_importance:
+                    continue
 
                 result = SearchResult(
                     memory_id=memory_id,
@@ -552,9 +629,9 @@ class SimilaritySearchOptimizer:
                 )
                 results.append(result)
 
-            # Sort by similarity score
+            # Sort by similarity score and limit to requested amount
             results.sort(key=lambda x: x.similarity_score, reverse=True)
-            return results
+            return results[:query.config.max_results]
 
     def _rerank_results(
         self, results: list[SearchResult], config: SearchConfig

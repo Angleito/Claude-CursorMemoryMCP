@@ -542,20 +542,28 @@ class MemoryManager:
     def _build_search_query(
         self, search_data: MemorySearch, user_id: str, query_embedding: list[float]
     ) -> tuple[str, list[Any]]:
-        """Build parameterized search query with filters."""
+        """Build optimized parameterized search query with filters."""
+        # Pre-compute similarity threshold for optimization
+        threshold = search_data.threshold or self.settings.similarity_threshold
+        if threshold < 0 or threshold > 1:
+            raise ValueError("Threshold must be between 0 and 1")
+
+        # Use CTE for better query planning with large datasets
         base_query = """
-            SELECT id, user_id, content, metadata, tags, memory_type,
-                   priority, source, context, access_count, created_at,
-                   updated_at, expires_at,
-                   1 - (embedding <=> $2) as similarity_score
-            FROM memories
-            WHERE user_id = $1 AND expires_at IS NULL OR expires_at > NOW()
+            WITH filtered_memories AS (
+                SELECT id, user_id, content, metadata, tags, memory_type,
+                       priority, source, context, access_count, created_at,
+                       updated_at, expires_at, embedding
+                FROM memories
+                WHERE user_id = $1 
+                  AND embedding IS NOT NULL
+                  AND (expires_at IS NULL OR expires_at > NOW())
         """
 
-        params = [user_id, query_embedding]
-        param_count = 2
+        params = [user_id]
+        param_count = 1
 
-        # Add filters
+        # Add selective filters in CTE for better performance
         if search_data.memory_types:
             param_count += 1
             type_values = [mt.value for mt in search_data.memory_types]
@@ -577,19 +585,28 @@ class MemoryManager:
             base_query += f" AND created_at <= ${param_count}"
             params.append(search_data.date_to)
 
-        # Add similarity threshold
-        threshold = search_data.threshold or self.settings.similarity_threshold
-        if threshold < 0 or threshold > 1:
-            raise ValueError("Threshold must be between 0 and 1")
-
+        # Close CTE and add similarity calculation
         param_count += 1
-        base_query += f" AND 1 - (embedding <=> $2) >= ${param_count}"
+        base_query += f"""
+            )
+            SELECT fm.id, fm.user_id, fm.content, fm.metadata, fm.tags, fm.memory_type,
+                   fm.priority, fm.source, fm.context, fm.access_count, fm.created_at,
+                   fm.updated_at, fm.expires_at,
+                   1 - (fm.embedding <=> ${param_count}) as similarity_score
+            FROM filtered_memories fm
+            WHERE 1 - (fm.embedding <=> ${param_count}) >= ${param_count + 1}
+        """
+        params.append(query_embedding)
+        
+        param_count += 1
         params.append(threshold)
 
-        # Add ordering and limit
-        base_query += " ORDER BY similarity_score DESC"
+        # Optimized ordering and limit
         param_count += 1
-        base_query += f" LIMIT ${param_count}"
+        base_query += f"""
+            ORDER BY fm.embedding <=> ${param_count - 1}
+            LIMIT ${param_count}
+        """
         params.append(min(search_data.limit, 1000))
 
         return base_query, params

@@ -503,7 +503,7 @@ class EmbeddingPipeline:
     async def generate_embeddings(
         self, requests: list[EmbeddingRequest], provider_name: str | None = None
     ) -> list[EmbeddingResult]:
-        """Generate embeddings for multiple requests."""
+        """Generate embeddings for multiple requests with optimized batching."""
         if not requests:
             return []
 
@@ -516,15 +516,27 @@ class EmbeddingPipeline:
             provider = self.providers[provider_name]
             config = self.default_config
 
+        # Deduplicate texts while preserving request mapping
+        text_to_indices = {}
+        unique_requests = []
+        
+        for i, request in enumerate(requests):
+            text_key = request.text.strip().lower()
+            if text_key in text_to_indices:
+                text_to_indices[text_key].append(i)
+            else:
+                text_to_indices[text_key] = [i]
+                unique_requests.append((len(unique_requests), request))
+
         # Group requests by cache status
         cached_results = {}
         uncached_requests = []
 
-        for i, request in enumerate(requests):
+        for unique_idx, request in unique_requests:
             # Check cache
             cached_embedding = await self.cache.get(request.text, config.model_name)
             if cached_embedding is not None:
-                cached_results[i] = EmbeddingResult(
+                cached_results[unique_idx] = EmbeddingResult(
                     text=request.text,
                     embedding=cached_embedding,
                     model_name=config.model_name,
@@ -538,18 +550,29 @@ class EmbeddingPipeline:
                     metadata=request.metadata,
                 )
             else:
-                uncached_requests.append((i, request))
+                uncached_requests.append((unique_idx, request))
 
-        # Process uncached requests in batches
-        results = [None] * len(requests)
+        # Process uncached requests in optimized batches
+        unique_results = [None] * len(unique_requests)
 
         # Fill cached results
         for i, result in cached_results.items():
-            results[i] = result
+            unique_results[i] = result
 
-        # Process uncached in batches
+        # Process uncached in adaptive batches
         if uncached_requests:
-            batch_size = config.batch_size
+            # Adaptive batch sizing based on text lengths
+            total_chars = sum(len(req.text) for _, req in uncached_requests)
+            avg_chars = total_chars / len(uncached_requests)
+            
+            if avg_chars > 2000:  # Long texts
+                batch_size = max(config.batch_size // 4, 10)
+            elif avg_chars > 500:  # Medium texts
+                batch_size = config.batch_size // 2
+            else:  # Short texts
+                batch_size = config.batch_size
+                
+            # Process in batches with concurrent caching
             for i in range(0, len(uncached_requests), batch_size):
                 batch = uncached_requests[i : i + batch_size]
                 batch_texts = [req.text for _, req in batch]
@@ -560,8 +583,9 @@ class EmbeddingPipeline:
                     embeddings = await provider.generate_embeddings(batch_texts)
                     processing_time = (time.time() - start_time) * 1000
 
-                    # Create results and cache embeddings
-                    for _j, ((orig_idx, request), embedding) in enumerate(
+                    # Create results and cache embeddings concurrently
+                    cache_tasks = []
+                    for _j, ((unique_idx, request), embedding) in enumerate(
                         zip(batch, embeddings, strict=False)
                     ):
                         result = EmbeddingResult(
@@ -578,21 +602,25 @@ class EmbeddingPipeline:
                             metadata=request.metadata,
                         )
 
-                        results[orig_idx] = result
+                        unique_results[unique_idx] = result
 
-                        # Cache the embedding
-                        await self.cache.set(
+                        # Schedule cache operation
+                        cache_task = self.cache.set(
                             request.text,
                             config.model_name,
                             embedding,
                             config.cache_ttl_hours,
                         )
+                        cache_tasks.append(cache_task)
+
+                    # Execute cache operations concurrently
+                    await asyncio.gather(*cache_tasks, return_exceptions=True)
 
                 except Exception as e:
                     logger.error("Batch embedding generation failed: %s", e)
                     # Create error results
-                    for orig_idx, request in batch:
-                        results[orig_idx] = EmbeddingResult(
+                    for unique_idx, request in batch:
+                        unique_results[unique_idx] = EmbeddingResult(
                             text=request.text,
                             embedding=np.zeros(config.dimensions, dtype=np.float32),
                             model_name=config.model_name,
@@ -605,6 +633,49 @@ class EmbeddingPipeline:
                             memory_id=request.memory_id,
                             metadata={"error": str(e)},
                         )
+
+        # Map unique results back to original request indices
+        results = []
+        for i, request in enumerate(requests):
+            text_key = request.text.strip().lower()
+            unique_idx = None
+            for j, (_, unique_req) in enumerate(unique_requests):
+                if unique_req.text.strip().lower() == text_key:
+                    unique_idx = j
+                    break
+            
+            if unique_idx is not None and unique_results[unique_idx]:
+                # Create a copy with correct user_id and memory_id for this request
+                base_result = unique_results[unique_idx]
+                result = EmbeddingResult(
+                    text=base_result.text,
+                    embedding=base_result.embedding,
+                    model_name=base_result.model_name,
+                    dimensions=base_result.dimensions,
+                    processing_time_ms=base_result.processing_time_ms,
+                    token_count=base_result.token_count,
+                    cache_hit=base_result.cache_hit,
+                    timestamp=base_result.timestamp,
+                    user_id=request.user_id,
+                    memory_id=request.memory_id,
+                    metadata=request.metadata,
+                )
+                results.append(result)
+            else:
+                # Fallback error result
+                results.append(EmbeddingResult(
+                    text=request.text,
+                    embedding=np.zeros(config.dimensions, dtype=np.float32),
+                    model_name=config.model_name,
+                    dimensions=config.dimensions,
+                    processing_time_ms=0,
+                    token_count=0,
+                    cache_hit=False,
+                    timestamp=datetime.now(),
+                    user_id=request.user_id,
+                    memory_id=request.memory_id,
+                    metadata={"error": "Processing failed"},
+                ))
 
         return results
 

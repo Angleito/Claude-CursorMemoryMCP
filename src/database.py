@@ -231,16 +231,31 @@ class DatabaseManager:
 
         # Create optimized indexes for better performance
         indexes = [
+            # Core user and memory indexes
             "CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id)",
             "CREATE INDEX IF NOT EXISTS idx_memories_user_created ON memories(user_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_memories_user_type ON memories(user_id, memory_type)",
             "CREATE INDEX IF NOT EXISTS idx_memories_user_priority ON memories(user_id, priority)",
+            
+            # Composite indexes for common query patterns
+            "CREATE INDEX IF NOT EXISTS idx_memories_user_type_created ON memories(user_id, memory_type, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memories_user_priority_created ON memories(user_id, priority, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_memories_embedding_not_null ON memories(user_id) WHERE embedding IS NOT NULL",
+            
+            # JSON and array indexes
             "CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories USING GIN(tags)",
             "CREATE INDEX IF NOT EXISTS idx_memories_metadata ON memories USING GIN(metadata)",
+            
+            # Temporal indexes
             "CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at)",
             "CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at) WHERE expires_at IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(user_id, created_at DESC) WHERE expires_at IS NULL OR expires_at > NOW()",
+            
+            # User management indexes
             "CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active) WHERE is_active = true",
             "CREATE INDEX IF NOT EXISTS idx_users_email_active ON users(email) WHERE is_active = true",
+            
+            # Analytics and monitoring indexes
             "CREATE INDEX IF NOT EXISTS idx_search_history_user_created ON search_history(user_id, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_plugin_configs_user_enabled ON plugin_configs(user_id, enabled) WHERE enabled = true",
         ]
