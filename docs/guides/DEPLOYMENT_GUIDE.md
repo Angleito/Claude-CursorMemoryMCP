@@ -42,9 +42,8 @@
 
 1. **Clone the repository**
    ```bash
-   cd /opt
-   git clone <your-repo-url> mem0ai-deploy
-   cd mem0ai-deploy
+   git clone https://github.com/Angleito/Claude-CursorMemoryMCP.git
+   cd Claude-CursorMemoryMCP
    ```
 
 2. **Make scripts executable**
@@ -132,16 +131,16 @@ sudo apt install -y ufw fail2ban nginx-utils
 sudo useradd -r -s /bin/bash -d /mem0ai -m mem0ai
 sudo usermod -aG docker mem0ai
 
-# Copy files
-sudo cp -r /mem0ai-deploy/* /mem0ai/
-sudo chown -R mem0ai:mem0ai /mem0ai
-sudo chmod +x /mem0ai/scripts/*.sh
+# Copy files to installation directory
+sudo cp -r /tmp/Claude-CursorMemoryMCP/* /Claude-CursorMemoryMCP/
+sudo chown -R mem0ai:mem0ai /Claude-CursorMemoryMCP
+sudo chmod +x /Claude-CursorMemoryMCP/scripts/*.sh
 ```
 
 ### Step 3: Generate Configuration
 
 ```bash
-cd /mem0ai
+cd /Claude-CursorMemoryMCP
 sudo -u mem0ai ./scripts/generate-secrets.sh
 ```
 
@@ -184,8 +183,8 @@ sudo cp config/systemd/*.service /etc/systemd/system/
 sudo cp config/systemd/*.timer /etc/systemd/system/
 
 # Update paths in service files
-sudo sed -i "s|/mem0ai|/mem0ai|g" /etc/systemd/system/mem0ai*.service
-sudo sed -i "s|/mem0ai|/mem0ai|g" /etc/systemd/system/mem0ai*.timer
+sudo sed -i "s|/mem0ai|/Claude-CursorMemoryMCP|g" /etc/systemd/system/mem0ai*.service
+sudo sed -i "s|/mem0ai|/Claude-CursorMemoryMCP|g" /etc/systemd/system/mem0ai*.timer
 
 # Enable services
 sudo systemctl daemon-reload
